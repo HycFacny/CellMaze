@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="790" height="590" viewBox="0 0 790 590">
+<rect width="790" height="590" fill="white"/>
+<text x="395" y="25" text-anchor="middle" font-family="monospace" font-size="18" font-weight="bold" fill="#333">M2 层布线结果</text>
+<line x1="95.0" y1="70" x2="95.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="145.0" y1="70" x2="145.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="195.0" y1="70" x2="195.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="245.0" y1="70" x2="245.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="295.0" y1="70" x2="295.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="345.0" y1="70" x2="345.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="395.0" y1="70" x2="395.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="445.0" y1="70" x2="445.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="495.0" y1="70" x2="495.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="545.0" y1="70" x2="545.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="595.0" y1="70" x2="595.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="645.0" y1="70" x2="645.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="695.0" y1="70" x2="695.0" y2="520" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="70" y1="495.0" x2="720" y2="495.0" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="70" y1="445.0" x2="720" y2="445.0" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="70" y1="395.0" x2="720" y2="395.0" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="70" y1="345.0" x2="720" y2="345.0" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="70" y1="295.0" x2="720" y2="295.0" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="70" y1="245.0" x2="720" y2="245.0" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="70" y1="195.0" x2="720" y2="195.0" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="70" y1="145.0" x2="720" y2="145.0" stroke="#E0E0E0" stroke-width="0.5"/>
+<line x1="70" y1="95.0" x2="720" y2="95.0" stroke="#E0E0E0" stroke-width="0.5"/>
+<text x="95.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">0</text>
+<text x="145.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">1</text>
+<text x="195.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">2</text>
+<text x="245.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">3</text>
+<text x="295.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">4</text>
+<text x="345.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">5</text>
+<text x="395.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">6</text>
+<text x="445.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">7</text>
+<text x="495.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">8</text>
+<text x="545.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">9</text>
+<text x="595.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">10</text>
+<text x="645.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">11</text>
+<text x="695.0" y="62" text-anchor="middle" font-family="monospace" font-size="10" fill="#888">12</text>
+<text x="58" y="499.0" text-anchor="end" font-family="monospace" font-size="10" fill="#888">0</text>
+<text x="58" y="449.0" text-anchor="end" font-family="monospace" font-size="10" fill="#888">1</text>
+<text x="58" y="399.0" text-anchor="end" font-family="monospace" font-size="10" fill="#888">2</text>
+<text x="58" y="349.0" text-anchor="end" font-family="monospace" font-size="10" fill="#888">3</text>
+<text x="58" y="299.0" text-anchor="end" font-family="monospace" font-size="10" fill="#888">4</text>
+<text x="58" y="249.0" text-anchor="end" font-family="monospace" font-size="10" fill="#888">5</text>
+<text x="58" y="199.0" text-anchor="end" font-family="monospace" font-size="10" fill="#888">6</text>
+<text x="58" y="149.0" text-anchor="end" font-family="monospace" font-size="10" fill="#888">7</text>
+<text x="58" y="99.0" text-anchor="end" font-family="monospace" font-size="10" fill="#888">8</text>
+<rect x="371.0" y="421.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="421.0" y="421.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="471.0" y="421.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="521.0" y="421.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="571.0" y="421.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="621.0" y="421.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="671.0" y="421.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="371.0" y="371.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="421.0" y="371.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="471.0" y="371.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="521.0" y="371.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="571.0" y="371.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="621.0" y="371.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="671.0" y="371.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="371.0" y="321.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="421.0" y="321.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="371.0" y="271.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="421.0" y="271.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="471.0" y="271.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="521.0" y="271.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="571.0" y="271.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="621.0" y="271.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="671.0" y="271.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="371.0" y="221.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="421.0" y="221.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="471.0" y="221.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="521.0" y="221.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="571.0" y="221.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="621.0" y="221.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<rect x="671.0" y="221.0" width="48" height="48" fill="#FEE2E2" opacity="0.5"/>
+<line x1="495.0" y1="345.0" x2="545.0" y2="345.0" stroke="#6A4C93" stroke-width="5" stroke-linecap="round"/>
+<line x1="545.0" y1="345.0" x2="595.0" y2="345.0" stroke="#6A4C93" stroke-width="5" stroke-linecap="round"/>
+<line x1="595.0" y1="345.0" x2="645.0" y2="345.0" stroke="#6A4C93" stroke-width="5" stroke-linecap="round"/>
+<line x1="645.0" y1="345.0" x2="695.0" y2="345.0" stroke="#6A4C93" stroke-width="5" stroke-linecap="round"/>
+<circle cx="495.0" cy="345.0" r="6" fill="#6A4C93"/>
+<circle cx="545.0" cy="345.0" r="6" fill="#6A4C93"/>
+<circle cx="595.0" cy="345.0" r="6" fill="#6A4C93"/>
+<circle cx="645.0" cy="345.0" r="6" fill="#6A4C93"/>
+<circle cx="695.0" cy="345.0" r="6" fill="#6A4C93"/>
+<rect x="70" y="552" width="12" height="12" fill="#E63946" rx="2"/>
+<text x="86" y="562" font-family="monospace" font-size="11" fill="#333">net_A(FAIL)</text>
+<rect x="190" y="552" width="12" height="12" fill="#457B9D" rx="2"/>
+<text x="206" y="562" font-family="monospace" font-size="11" fill="#333">net_B(FAIL)</text>
+<rect x="310" y="552" width="12" height="12" fill="#2A9D8F" rx="2"/>
+<text x="326" y="562" font-family="monospace" font-size="11" fill="#333">net_C(FAIL)</text>
+<rect x="430" y="552" width="12" height="12" fill="#E9C46A" rx="2"/>
+<text x="446" y="562" font-family="monospace" font-size="11" fill="#333">net_D(FAIL)</text>
+<rect x="550" y="552" width="12" height="12" fill="#F4A261" rx="2"/>
+<text x="566" y="562" font-family="monospace" font-size="11" fill="#333">net_E(FAIL)</text>
+<rect x="670" y="552" width="12" height="12" fill="#264653" rx="2"/>
+<text x="686" y="562" font-family="monospace" font-size="11" fill="#333">net_F(FAIL)</text>
+</svg>
