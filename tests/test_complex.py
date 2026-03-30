@@ -10,6 +10,7 @@ import pytest
 from maze_router.net import Net
 from maze_router.grid import RoutingGrid
 from maze_router.spacing import SpacingManager
+from maze_router.corner import CornerManager
 from maze_router.ripup import RipupManager
 from maze_router.strategy import DefaultStrategy, CongestionAwareStrategy
 from maze_router.visualizer import Visualizer
@@ -38,7 +39,10 @@ class TestComplexScenario:
         grid = make_complex_grid()
         spacing_mgr = SpacingManager({"M0": 1, "M1": 1, "M2": 1})
         strategy = DefaultStrategy(max_iterations=50)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net1", [("M0", 0, 0), ("M0", 14, 0)]),
@@ -123,7 +127,10 @@ class TestComplexScenario:
         grid = make_complex_grid(width=20, height=20)
         spacing_mgr = SpacingManager({"M0": 1, "M1": 1, "M2": 1})
         strategy = CongestionAwareStrategy(max_iterations=50, congestion_weight=0.5)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net1", [("M0", 0, 0), ("M0", 19, 0)]),

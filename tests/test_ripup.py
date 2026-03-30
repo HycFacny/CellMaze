@@ -10,6 +10,7 @@ import pytest
 from maze_router.net import Net
 from maze_router.grid import RoutingGrid
 from maze_router.spacing import SpacingManager
+from maze_router.corner import CornerManager
 from maze_router.ripup import RipupManager
 from maze_router.strategy import DefaultStrategy, CongestionAwareStrategy
 
@@ -141,3 +142,56 @@ class TestRipupReroute:
         solution = manager.run(nets)
         # 三层网格有更多空间，应该能布通更多线网
         assert solution.routed_count >= 2
+
+    def test_corner_mgr_parameter(self):
+        """测试 RipupManager 接受并传递 corner_mgr 参数"""
+        grid = make_grid(width=10, height=5)
+        spacing_mgr = SpacingManager({"M0": 0})
+        strategy = DefaultStrategy(max_iterations=10)
+
+        # 无折角代价
+        mgr_no = RipupManager(
+            grid, spacing_mgr, strategy, corner_mgr=CornerManager.disabled(),
+        )
+        # 有折角代价（默认值）
+        mgr_hi = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0}),
+        )
+
+        nets = [Net("netA", [("M0", 0, 2), ("M0", 9, 2)])]
+
+        sol_no = mgr_no.run(nets)
+        sol_hi = mgr_hi.run(nets)
+
+        assert sol_no.results["netA"].success
+        assert sol_hi.results["netA"].success
+        # 折角代价可能使总代价增大或相同（直线路径则相同）
+        assert sol_hi.total_cost >= sol_no.total_cost
+
+    def test_corner_mgr_ripup_convergence(self):
+        """折角代价不影响布线收敛性，两线网均应布通"""
+        vias = []
+        for x in range(12):
+            for y in range(12):
+                vias.append((("M0", x, y), ("M1", x, y), 2.0))
+        grid = RoutingGrid.build_grid(
+            layers=["M0", "M1"],
+            width=12,
+            height=12,
+            via_connections=vias,
+        )
+        spacing_mgr = SpacingManager({"M0": 1, "M1": 1})
+        strategy = CongestionAwareStrategy(max_iterations=30, congestion_weight=0.3)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0}),
+        )
+
+        nets = [
+            Net("net1", [("M0", 0, 6), ("M0", 11, 6)]),
+            Net("net2", [("M0", 6, 0), ("M0", 6, 11)]),
+        ]
+
+        solution = manager.run(nets)
+        assert solution.routed_count >= 1

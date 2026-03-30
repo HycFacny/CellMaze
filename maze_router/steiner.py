@@ -5,7 +5,7 @@ SteinerTreeBuilder 作为统一调度器，根据方法选择委托给：
 - MazeRouter: 增量贪心法（build_tree）
 - SteinerRouter: Dreyfus-Wagner DP法（build_tree_dp）
 
-两种路由器具有相同的约束处理接口（spacing、cable_locs、congestion）。
+两种路由器具有相同的约束处理接口（spacing、cable_locs、congestion、corner_costs）。
 """
 
 import logging
@@ -14,7 +14,8 @@ from typing import Optional, Callable, Dict, Set
 from maze_router.net import Net, Node, RoutingResult
 from maze_router.grid import RoutingGrid
 from maze_router.spacing import SpacingManager
-from maze_router.router import MazeRouter
+from maze_router.corner import CornerManager
+from maze_router.router import MazeRouter, _resolve_corner_mgr
 from maze_router.steiner_router import SteinerRouter
 
 logger = logging.getLogger(__name__)
@@ -24,14 +25,28 @@ class SteinerTreeBuilder:
     """
     Steiner树构建调度器。
 
-    提供两种构建方法，统一管理约束参数的传递：
+    提供两种构建方法，统一管理约束参数（含折角代价）的传递：
     - build_tree: 委托MazeRouter的增量贪心法
     - build_tree_dp: 委托SteinerRouter的Dreyfus-Wagner DP法
     """
 
-    def __init__(self, grid: RoutingGrid, spacing_mgr: SpacingManager):
+    def __init__(
+        self,
+        grid: RoutingGrid,
+        spacing_mgr: SpacingManager,
+        corner_mgr: Optional[CornerManager] = None,
+        corner_costs: Optional[Dict[str, float]] = None,
+    ):
+        """
+        参数:
+            grid: 布线网格
+            spacing_mgr: 间距约束管理器
+            corner_mgr: 折角代价管理器（CornerManager），优先于 corner_costs。
+            corner_costs: 向后兼容参数；仅在 corner_mgr=None 时生效。
+        """
         self.grid = grid
         self.spacing_mgr = spacing_mgr
+        self.corner_mgr = _resolve_corner_mgr(corner_mgr, corner_costs)
 
     def build_tree(
         self,
@@ -75,6 +90,7 @@ class SteinerTreeBuilder:
             self.spacing_mgr,
             cost_multiplier=cost_multiplier,
             congestion_map=congestion_map,
+            corner_mgr=self.corner_mgr,
         )
 
         # 第一个端口作为初始树
@@ -85,7 +101,7 @@ class SteinerTreeBuilder:
         while remaining:
             # 动态排序：选择离当前树估计最近的端口
             remaining.sort(key=lambda t: _min_manhattan_to_set(t, tree_nodes))
-
+ 
             target_terminal = remaining.pop(0)
 
             # 以整棵树为源，目标端口为目标
@@ -148,6 +164,7 @@ class SteinerTreeBuilder:
             self.spacing_mgr,
             cost_multiplier=cost_multiplier,
             congestion_map=congestion_map,
+            corner_mgr=self.corner_mgr,
         )
         return router.route(net)
 

@@ -79,6 +79,7 @@ import networkx as nx
 from maze_router.net import Net
 from maze_router.grid import RoutingGrid
 from maze_router.spacing import SpacingManager
+from maze_router.corner import CornerManager
 from maze_router.ripup import RipupManager
 from maze_router.strategy import DefaultStrategy, CongestionAwareStrategy
 from maze_router.visualizer import Visualizer
@@ -344,7 +345,10 @@ class TestOAI33StandardCellRouting:
         应该可以直接通过M0竖向连通，无需使用M1/M2。
         """
         strategy = DefaultStrategy(max_iterations=10)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net_A", [("M0", 1, 7), ("M0", 1, 1)],
@@ -375,7 +379,10 @@ class TestOAI33StandardCellRouting:
         两者交叉，至少一个需要使用M1。
         """
         strategy = CongestionAwareStrategy(max_iterations=30)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net_E", [("M0", 9, 7), ("M0", 7, 1)],
@@ -395,7 +402,10 @@ class TestOAI33StandardCellRouting:
         至少需要M1甚至M2来解决交叉冲突。
         """
         strategy = CongestionAwareStrategy(max_iterations=50, congestion_weight=0.3)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net_D", [("M0", 7, 7), ("M0", 11, 1)],
@@ -432,7 +442,10 @@ class TestOAI33StandardCellRouting:
         必须通过M1/M2进行跨区域连接。
         """
         strategy = CongestionAwareStrategy(max_iterations=30)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net_Y", [("M0", 6, 7), ("M0", 0, 1), ("M0", 4, 1)],
@@ -454,7 +467,10 @@ class TestOAI33StandardCellRouting:
         S/D列M0无法横向连通，需通过M1连接。
         """
         strategy = CongestionAwareStrategy(max_iterations=30)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net_mid", [("M0", 2, 1), ("M0", 6, 1), ("M0", 10, 1)],
@@ -472,7 +488,10 @@ class TestOAI33StandardCellRouting:
     def test_oai33_power_nets(self, grid, spacing_mgr):
         """VDD和VSS电源线网布线"""
         strategy = DefaultStrategy(max_iterations=20)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net_VDD", [("M0", 0, 8), ("M0", 12, 8)],
@@ -494,8 +513,11 @@ class TestOAI33StandardCellRouting:
         完整的OAI33标准单元布线：10个线网同时布线。
         保存SVG到 results/stdcell_oai33/。
         """
+        CORNER = CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0})
         strategy = CongestionAwareStrategy(max_iterations=80, congestion_weight=0.3)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy, corner_mgr=CORNER,
+        )
         nets = build_oai33_nets()
 
         solution = manager.run(nets)
@@ -519,6 +541,33 @@ class TestOAI33StandardCellRouting:
         # 整体至少8/10布通
         assert solution.routed_count >= 8, \
             f"应至少布通8/10个线网，实际 {solution.routed_count}/10"
+
+        # 验证共栅（竖向直连）折角数为0
+        from maze_router.router import _move_dir_code, _DIR_NONE
+        from collections import defaultdict
+        for net_name in ["net_A", "net_B", "net_C"]:
+            result = solution.results[net_name]
+            adj = defaultdict(list)
+            for u, v in result.routed_edges:
+                adj[u].append(v)
+                adj[v].append(u)
+            corners = 0
+            counted = set()
+            for u, v in result.routed_edges:
+                for w in adj[u]:
+                    if w == v:
+                        continue
+                    pair = (min(id(w), id(v)), max(id(w), id(v)), u)
+                    if pair in counted:
+                        continue
+                    counted.add(pair)
+                    d_in = _move_dir_code(w, u)
+                    d_out = _move_dir_code(u, v)
+                    if (d_in != _DIR_NONE and d_out != _DIR_NONE
+                            and d_in != d_out and u[0] == v[0] == w[0]):
+                        corners += 1
+            assert corners == 0, \
+                f"共栅 {net_name} 应为直线路径，折角数应为0，实际={corners}"
 
         # 打印摘要
         print(f"\n{'='*60}")
@@ -544,7 +593,10 @@ class TestOAI33StandardCellRouting:
         2. S/D线网在M0上只使用S/D列
         """
         strategy = CongestionAwareStrategy(max_iterations=80, congestion_weight=0.3)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
         nets = build_oai33_nets()
         solution = manager.run(nets)
 
@@ -568,7 +620,10 @@ class TestOAI33StandardCellRouting:
     def test_m2_routing_constraint(self, grid, spacing_mgr):
         """验证布线结果中M2层只使用y=3和y=5"""
         strategy = CongestionAwareStrategy(max_iterations=80, congestion_weight=0.3)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
         nets = build_oai33_nets()
         solution = manager.run(nets)
 
@@ -583,7 +638,10 @@ class TestOAI33StandardCellRouting:
     def test_no_net_overlap(self, grid, spacing_mgr):
         """验证不同线网的布线路径不重叠（节点不共用）"""
         strategy = CongestionAwareStrategy(max_iterations=80, congestion_weight=0.3)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
         nets = build_oai33_nets()
         solution = manager.run(nets)
 
@@ -631,7 +689,10 @@ class TestOAI33WithSpacing2:
         （Gate列间距=2，恰好等于space），布线顺序和策略至关重要。
         """
         strategy = CongestionAwareStrategy(max_iterations=30, congestion_weight=0.5)
-        manager = RipupManager(grid, spacing_mgr_s2, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr_s2, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net_A", [("M0", 1, 7), ("M0", 1, 1)],
@@ -670,7 +731,10 @@ class TestOAI33WithSpacing2:
         交叉线网几乎不可能在同一层共存，需要充分利用M1和M2。
         """
         strategy = CongestionAwareStrategy(max_iterations=80, congestion_weight=0.5)
-        manager = RipupManager(grid, spacing_mgr_s2, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr_s2, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net_D", [("M0", 7, 7), ("M0", 11, 1)],
@@ -707,8 +771,11 @@ class TestOAI33WithSpacing2:
         这是极端压力测试，验证拆线重布引擎在高间距约束下的表现。
         保存SVG到 results/stdcell_oai33_s2/。
         """
+        CORNER = CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0})
         strategy = CongestionAwareStrategy(max_iterations=100, congestion_weight=0.5)
-        manager = RipupManager(grid, spacing_mgr_s2, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr_s2, strategy, corner_mgr=CORNER,
+        )
         nets = build_oai33_nets()
 
         solution = manager.run(nets)
@@ -756,17 +823,26 @@ class TestOAI33WithSpacing2:
         验证spacing=2下，已布通的不同线网之间的Chebyshev距离≥3
         （即任意两个不同线网的已布线节点在同层上的距离 > space=2）。
         """
+        CORNER = CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0})
         strategy = CongestionAwareStrategy(max_iterations=100, congestion_weight=0.5)
-        manager = RipupManager(grid, spacing_mgr_s2, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr_s2, strategy, corner_mgr=CORNER,
+        )
         nets = build_oai33_nets()
         solution = manager.run(nets)
 
-        # 按层收集每个已布通线网的节点
+        # 按层收集每个已布通线网的节点（排除固定terminal点）
+        all_terminals = set()
+        for net in nets:
+            all_terminals.update(net.terminals)
+
         layer_net_nodes = {}
         for net_name, result in solution.results.items():
             if not result.success:
                 continue
             for node in result.routed_nodes:
+                if node in all_terminals:   # 固定端口不参与间距检查
+                    continue
                 layer = node[0]
                 if layer not in layer_net_nodes:
                     layer_net_nodes[layer] = {}

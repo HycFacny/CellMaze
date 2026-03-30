@@ -8,6 +8,7 @@ import pytest
 from maze_router.net import Net
 from maze_router.grid import RoutingGrid
 from maze_router.spacing import SpacingManager
+from maze_router.corner import CornerManager
 from maze_router.steiner import SteinerTreeBuilder
 from maze_router.strategy import DefaultStrategy
 
@@ -257,10 +258,10 @@ class TestSteinerTreeDP:
                 assert node in cable_locs, f"节点 {node} 不在cable_locs中"
 
     def test_dp_two_terminal_fallback(self):
-        """测试两端口时DP退化为最短路径（走build_tree快速路径）"""
+        """测试两端口时DP退化为最短路径（走build_tree快速路径），验证纯边代价"""
         grid = RoutingGrid.build_grid(layers=["M0"], width=5, height=5)
         spacing_mgr = SpacingManager({"M0": 0})
-        builder = SteinerTreeBuilder(grid, spacing_mgr)
+        builder = SteinerTreeBuilder(grid, spacing_mgr, corner_mgr=CornerManager.disabled())
 
         net = Net("net1", [("M0", 0, 0), ("M0", 4, 4)])
         result = builder.build_tree_dp(net)
@@ -282,3 +283,106 @@ class TestSteinerTreeDP:
 
         result = builder.build_tree_dp(net)
         assert not result.success
+
+
+class TestCornerCostSteiner:
+    """Steiner树折角代价集成测试"""
+
+    def test_dp_corner_cost_increases_cost(self):
+        """DP方法中折角代价使总代价增加"""
+        grid = RoutingGrid.build_grid(layers=["M0"], width=8, height=8)
+        spacing_mgr = SpacingManager({"M0": 0})
+
+        # 无折角代价
+        builder_no = SteinerTreeBuilder(grid, spacing_mgr, corner_mgr=CornerManager.disabled())
+        # 有折角代价
+        builder_hi = SteinerTreeBuilder(grid, spacing_mgr, corner_mgr=CornerManager(l_costs={"M0": 5.0}))
+
+        # 三端口，必须折角
+        terminals = [("M0", 0, 0), ("M0", 7, 0), ("M0", 3, 7)]
+        net = Net("net1", terminals)
+
+        r_no = builder_no.build_tree_dp(net)
+        r_hi = builder_hi.build_tree_dp(net)
+
+        assert r_no.success and r_hi.success
+        # 有折角代价时总代价 ≥ 无折角代价
+        assert r_hi.total_cost >= r_no.total_cost
+
+    def test_dp_corner_mgr_disabled_vs_enabled(self):
+        """CornerManager.disabled() 与 CornerManager(l_costs={"M0":5.0}) 代价应有差异"""
+        grid = RoutingGrid.build_grid(layers=["M0"], width=6, height=6)
+        spacing_mgr = SpacingManager({"M0": 0})
+
+        terminals = [("M0", 0, 0), ("M0", 5, 0), ("M0", 2, 5)]
+        net = Net("net1", terminals)
+
+        r_no_corner = SteinerTreeBuilder(
+            grid, spacing_mgr, corner_mgr=CornerManager.disabled()
+        ).build_tree_dp(net)
+        r_with_corner = SteinerTreeBuilder(
+            grid, spacing_mgr, corner_mgr=CornerManager(l_costs={"M0": 5.0})
+        ).build_tree_dp(net)
+
+        assert r_no_corner.success and r_with_corner.success
+        # 有折角代价时总代价应不小于无折角代价
+        assert r_with_corner.total_cost >= r_no_corner.total_cost
+
+    def test_greedy_corner_cost_increases_cost(self):
+        """贪心方法中折角代价使总代价增加"""
+        grid = RoutingGrid.build_grid(layers=["M0"], width=6, height=6)
+        spacing_mgr = SpacingManager({"M0": 0})
+
+        terminals = [("M0", 0, 0), ("M0", 5, 5)]
+        net = Net("net1", terminals)
+
+        from maze_router.strategy import DefaultStrategy
+        strategy = DefaultStrategy()
+        order = strategy.order_terminals(net, set())
+
+        r_no = SteinerTreeBuilder(
+            grid, spacing_mgr, corner_mgr=CornerManager.disabled()
+        ).build_tree(net, order)
+        r_hi = SteinerTreeBuilder(
+            grid, spacing_mgr, corner_mgr=CornerManager(l_costs={"M0": 10.0})
+        ).build_tree(net, order)
+
+        assert r_no.success and r_hi.success
+        assert r_hi.total_cost >= r_no.total_cost
+
+    def test_dp_straight_line_no_corner_penalty(self):
+        """直线路径：DP方法中折角代价不影响直线路径的代价"""
+        grid = RoutingGrid.build_grid(layers=["M0"], width=8, height=1)
+        spacing_mgr = SpacingManager({"M0": 0})
+
+        terminals = [("M0", 0, 0), ("M0", 7, 0)]
+        net = Net("net1", terminals)
+
+        r_no = SteinerTreeBuilder(
+            grid, spacing_mgr, corner_mgr=CornerManager.disabled()
+        ).build_tree_dp(net)
+        r_hi = SteinerTreeBuilder(
+            grid, spacing_mgr, corner_mgr=CornerManager(l_costs={"M0": 20.0})
+        ).build_tree_dp(net)
+
+        assert r_no.success and r_hi.success
+        # 直线路径无折角，代价相同
+        assert r_no.total_cost == pytest.approx(r_hi.total_cost)
+
+    def test_dp_corner_mgr_none_is_default(self):
+        """corner_mgr=None 等价于每层默认值 5.0"""
+        grid = RoutingGrid.build_grid(layers=["M0"], width=6, height=6)
+        spacing_mgr = SpacingManager({"M0": 0})
+
+        terminals = [("M0", 0, 0), ("M0", 5, 0), ("M0", 2, 5)]
+        net = Net("net1", terminals)
+
+        r_none = SteinerTreeBuilder(
+            grid, spacing_mgr, corner_mgr=None
+        ).build_tree_dp(net)
+        r_explicit = SteinerTreeBuilder(
+            grid, spacing_mgr, corner_mgr=CornerManager(l_costs={"M0": 5.0})
+        ).build_tree_dp(net)
+
+        assert r_none.success and r_explicit.success
+        assert r_none.total_cost == pytest.approx(r_explicit.total_cost)

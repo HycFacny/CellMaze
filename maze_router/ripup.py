@@ -13,9 +13,10 @@ from collections import defaultdict
 from maze_router.net import Net, Node, RoutingResult, RoutingSolution
 from maze_router.grid import RoutingGrid
 from maze_router.spacing import SpacingManager
+from maze_router.corner import CornerManager
 from maze_router.steiner import SteinerTreeBuilder
 from maze_router.steiner_router import SteinerRouter
-from maze_router.router import MazeRouter
+from maze_router.router import MazeRouter, _resolve_corner_mgr
 from maze_router.strategy import (
     RoutingStrategy,
     RipupAction,
@@ -54,11 +55,15 @@ class RipupManager:
         grid: RoutingGrid,
         spacing_mgr: SpacingManager,
         strategy: RoutingStrategy,
+        corner_mgr: Optional[CornerManager] = None,
+        corner_costs: Optional[Dict[str, float]] = None,
     ):
         self.grid = grid
         self.spacing_mgr = spacing_mgr
         self.strategy = strategy
-        self.steiner_builder = SteinerTreeBuilder(grid, spacing_mgr)
+        self.corner_mgr = _resolve_corner_mgr(corner_mgr, corner_costs)
+        self.steiner_builder = SteinerTreeBuilder(grid, spacing_mgr,
+                                                  corner_mgr=self.corner_mgr)
 
         # 拥塞感知（如果策略支持）
         self._is_congestion_aware = isinstance(strategy, CongestionAwareStrategy)
@@ -410,6 +415,7 @@ class RipupManager:
             self.grid, self.spacing_mgr,
             cost_multiplier=cost_multiplier,
             congestion_map=congestion_map,
+            corner_mgr=self.corner_mgr,
         )
 
         # 按大小降序排列，从最大分量开始

@@ -38,6 +38,7 @@ import networkx as nx
 from maze_router.net import Net
 from maze_router.grid import RoutingGrid
 from maze_router.spacing import SpacingManager
+from maze_router.corner import CornerManager
 from maze_router.ripup import RipupManager
 from maze_router.strategy import DefaultStrategy, CongestionAwareStrategy
 from maze_router.visualizer import Visualizer
@@ -242,7 +243,10 @@ class TestStandardCellRouting:
         应该可以直接通过M0竖向连通，无需使用M1/M2。
         """
         strategy = DefaultStrategy(max_iterations=10)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net_A", [("M0", 1, 5), ("M0", 1, 1)], cable_locs=set(GATE_CABLE_LOCS)),
@@ -270,7 +274,10 @@ class TestStandardCellRouting:
         至少一个需要使用M1。两者都应布通。
         """
         strategy = CongestionAwareStrategy(max_iterations=30)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net_C", [("M0", 5, 5), ("M0", 7, 1)], cable_locs=set(GATE_CABLE_LOCS)),
@@ -292,7 +299,10 @@ class TestStandardCellRouting:
         必须通过M1/M2进行跨区域连接。
         """
         strategy = CongestionAwareStrategy(max_iterations=30)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
 
         nets = [
             Net("net_Y", [("M0", 4, 5), ("M0", 0, 1), ("M0", 8, 1)],
@@ -315,8 +325,11 @@ class TestStandardCellRouting:
         完整的AOI22标准单元布线：6个线网同时布线。
         保存SVG到 results/stdcell_aoi22/。
         """
+        CORNER = CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0})
         strategy = CongestionAwareStrategy(max_iterations=50, congestion_weight=0.3)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy, corner_mgr=CORNER,
+        )
         nets = build_aoi22_nets()
 
         solution = manager.run(nets)
@@ -336,6 +349,34 @@ class TestStandardCellRouting:
         assert solution.routed_count >= 5, \
             f"应至少布通5/6个线网，实际 {solution.routed_count}/6"
 
+        # 折角数统计（含折角代价后，共栅竖线应为0折角）
+        from maze_router.router import _move_dir_code, _DIR_NONE
+        from collections import defaultdict
+        for net_name in ["net_A", "net_B"]:
+            result = solution.results[net_name]
+            if not result.success:
+                continue
+            adj = defaultdict(list)
+            for u, v in result.routed_edges:
+                adj[u].append(v)
+                adj[v].append(u)
+            corners = 0
+            counted = set()
+            for u, v in result.routed_edges:
+                for w in adj[u]:
+                    if w == v:
+                        continue
+                    pair = (min(id(w), id(v)), max(id(w), id(v)), u)
+                    if pair in counted:
+                        continue
+                    counted.add(pair)
+                    d_in = _move_dir_code(w, u)
+                    d_out = _move_dir_code(u, v)
+                    if (d_in != _DIR_NONE and d_out != _DIR_NONE
+                            and d_in != d_out and u[0] == v[0] == w[0]):
+                        corners += 1
+            assert corners == 0, f"共栅 {net_name} 应为直线路径，折角数应为0，实际={corners}"
+
         # 打印摘要
         for name, result in sorted(solution.results.items()):
             status = "OK" if result.success else "FAIL"
@@ -353,7 +394,10 @@ class TestStandardCellRouting:
         2. S/D线网在M0上只使用S/D列
         """
         strategy = CongestionAwareStrategy(max_iterations=50, congestion_weight=0.3)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
         nets = build_aoi22_nets()
         solution = manager.run(nets)
 
@@ -377,7 +421,10 @@ class TestStandardCellRouting:
     def test_m2_routing_constraint(self, grid, spacing_mgr):
         """验证布线结果中M2层只使用y=2和y=4"""
         strategy = CongestionAwareStrategy(max_iterations=50, congestion_weight=0.3)
-        manager = RipupManager(grid, spacing_mgr, strategy)
+        manager = RipupManager(
+            grid, spacing_mgr, strategy,
+            corner_mgr=CornerManager(l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}),
+        )
         nets = build_aoi22_nets()
         solution = manager.run(nets)
 
