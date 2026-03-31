@@ -1,382 +1,244 @@
 """
-可视化模块
+Visualizer: 布线结果 SVG 可视化
 
-提供文本形式的网格可视化和SVG图片导出，显示每层的布线路径和禁区。
+将各层的布线结果保存为 SVG 文件（layer_m0.svg, layer_m1.svg, layer_m2.svg）。
+
+SVG 内容：
+  - 网格节点（灰色小圆点）
+  - 布线路径（按线网着色）
+  - Terminal 端口（大圆点，标注线网名）
+  - Pin 引出点（星形标记，标注 "PIN"）
 """
 
+from __future__ import annotations
 import os
-from typing import Dict, Set, Optional, List, Tuple
-from maze_router.net import Node, Edge, RoutingSolution
-from maze_router.grid import RoutingGrid
-from maze_router.spacing import SpacingManager
+import logging
+from typing import Dict, List, Optional, Set, Tuple
+
+from maze_router.data.net import Node, RoutingSolution
+from maze_router.data.grid import GridGraph
+
+logger = logging.getLogger(__name__)
+
+# 颜色列表（循环使用）
+_COLORS = [
+    "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
+    "#42d4f4", "#f032e6", "#bfef45", "#fabed4", "#469990",
+    "#dcbeff", "#9A6324", "#fffac8", "#800000", "#aaffc3",
+    "#808000", "#ffd8b1", "#000075",
+]
+
+_LAYER_BG = {
+    "M0": "#f0f0ff",
+    "M1": "#f0fff0",
+    "M2": "#fff0f0",
+}
 
 
 class Visualizer:
     """
     布线结果可视化器。
 
-    支持文本模式输出，在终端显示每层的网格布线情况。
+    将 RoutingSolution 中的布线结果绘制为分层 SVG 图像。
     """
 
-    # 线网显示字符映射（最多支持26个线网，用字母标识）
-    NET_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-
-    def __init__(self, grid: RoutingGrid):
-        self.grid = grid
-
-    def visualize_text(
+    def __init__(
         self,
+        grid: GridGraph,
         solution: RoutingSolution,
-        spacing_mgr: Optional[SpacingManager] = None,
-        show_spacing: bool = False,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
-    ) -> str:
-        """
-        生成文本形式的可视化输出。
-
-        参数:
-            solution: 布线方案
-            spacing_mgr: 间距管理器（用于显示禁区）
-            show_spacing: 是否显示禁区
-            width: 网格宽度（自动检测如果为None）
-            height: 网格高度（自动检测如果为None）
-        返回:
-            格式化的字符串
-        """
-        # 自动检测网格尺寸
-        if width is None or height is None:
-            all_nodes = self.grid.get_all_nodes()
-            if not all_nodes:
-                return "空网格"
-            if width is None:
-                width = max(n[1] for n in all_nodes) + 1
-            if height is None:
-                height = max(n[2] for n in all_nodes) + 1
-
-        # 为每个线网分配显示字符
-        net_char_map: Dict[str, str] = {}
-        for i, net_name in enumerate(sorted(solution.results.keys())):
-            if i < len(self.NET_CHARS):
-                net_char_map[net_name] = self.NET_CHARS[i]
-            else:
-                net_char_map[net_name] = "#"
-
-        # 构建每层的节点到线网映射
-        node_net_map: Dict[Node, str] = {}
-        terminal_set: Set[Node] = set()
-        for net_name, result in solution.results.items():
-            if result.success:
-                for node in result.routed_nodes:
-                    node_net_map[node] = net_name
-                for terminal in result.net.terminals:
-                    terminal_set.add(terminal)
-
-        output_lines = []
-
-        # 图例
-        output_lines.append("=== 布线可视化 ===")
-        output_lines.append("图例:")
-        for net_name, char in net_char_map.items():
-            result = solution.results[net_name]
-            status = "成功" if result.success else "失败"
-            output_lines.append(
-                f"  {char}/{char.lower() if char.isupper() else char.upper()}: "
-                f"{net_name} ({status}, 代价={result.total_cost:.1f})"
-            )
-        output_lines.append(f"  *: 端口(terminal)  .: 空节点  x: 不存在的节点")
-        if show_spacing:
-            output_lines.append(f"  ~: 禁区(spacing zone)")
-        output_lines.append("")
-
-        # 逐层显示
-        for layer in sorted(self.grid.layers):
-            output_lines.append(f"--- {layer} 层 ---")
-
-            # 列标题
-            header = "    " + "".join(f"{x:2d}" for x in range(width))
-            output_lines.append(header)
-
-            # 从上到下（y从大到小）显示
-            for y in range(height - 1, -1, -1):
-                row = f"{y:3d} "
-                for x in range(width):
-                    node = (layer, x, y)
-                    if not self.grid.is_valid_node(node):
-                        row += " x"
-                    elif node in node_net_map:
-                        net_name = node_net_map[node]
-                        char = net_char_map.get(net_name, "#")
-                        # 端口用大写/特殊标记显示
-                        if node in terminal_set:
-                            row += f" *"
-                        else:
-                            row += f" {char}"
-                    elif show_spacing and spacing_mgr:
-                        if spacing_mgr.is_occupied(node):
-                            row += " #"
-                        elif not spacing_mgr.is_available(node, "__check__"):
-                            row += " ~"
-                        else:
-                            row += " ."
-                    else:
-                        row += " ."
-
-                output_lines.append(row)
-            output_lines.append("")
-
-        # 摘要
-        output_lines.append(f"=== 摘要 ===")
-        output_lines.append(
-            f"布通率: {solution.routed_count}/{len(solution.results)} "
-            f"({100*solution.routed_count/max(1,len(solution.results)):.1f}%)"
-        )
-        output_lines.append(f"总代价: {solution.total_cost:.2f}")
-        if solution.failed_nets:
-            output_lines.append(f"未布通: {', '.join(solution.failed_nets)}")
-
-        return "\n".join(output_lines)
-
-    def print_solution(
-        self,
-        solution: RoutingSolution,
-        spacing_mgr: Optional[SpacingManager] = None,
-        show_spacing: bool = False,
-    ):
-        """直接打印可视化结果"""
-        print(self.visualize_text(solution, spacing_mgr, show_spacing))
-
-
-    # 线网颜色调色板（高对比度，适合EDA布线图）
-    NET_COLORS = [
-        "#E63946", "#457B9D", "#2A9D8F", "#E9C46A", "#F4A261",
-        "#264653", "#A8DADC", "#6A4C93", "#1982C4", "#8AC926",
-        "#FF595E", "#FFCA3A", "#6A0572", "#AB83A1", "#36827F",
-        "#C1666B", "#4ECDC4", "#556270", "#FF6B6B", "#FFA07A",
-    ]
-
-    def save_svg(
-        self,
-        solution: RoutingSolution,
-        output_dir: Optional[str] = None,
-        spacing_mgr: Optional[SpacingManager] = None,
-        show_spacing: bool = False,
         cell_size: int = 40,
-        padding: int = 60,
-    ) -> List[str]:
+        margin: int = 40,
+    ):
         """
-        将每层的布线结果导出为SVG文件。
-
-        文件命名: layer_m0.svg, layer_m1.svg, layer_m2.svg
-        默认保存到项目根目录下的 results/ 目录。
-
         参数:
-            solution: 布线方案
-            output_dir: 保存目录（默认为项目根目录下的results/）
-            spacing_mgr: 间距管理器（用于显示禁区）
-            show_spacing: 是否显示禁区
+            grid:      布线网格
+            solution:  布线方案
             cell_size: 每个网格单元的像素大小
-            padding: 图片四周的留白
-        返回:
-            生成的SVG文件路径列表
+            margin:    图像边距
         """
-        if output_dir is None:
-            output_dir = os.path.join(os.getcwd(), "results")
-        os.makedirs(output_dir, exist_ok=True)
+        self.grid = grid
+        self.solution = solution
+        self.cell_size = cell_size
+        self.margin = margin
 
-        # 自动检测网格尺寸
-        all_nodes = self.grid.get_all_nodes()
-        if not all_nodes:
-            return []
-        width = max(n[1] for n in all_nodes) + 1
-        height = max(n[2] for n in all_nodes) + 1
+        # 计算网格范围
+        all_nodes = grid.get_all_nodes()
+        if all_nodes:
+            self._xs = [n[1] for n in all_nodes]
+            self._ys = [n[2] for n in all_nodes]
+            self._x_min = min(self._xs)
+            self._x_max = max(self._xs)
+            self._y_min = min(self._ys)
+            self._y_max = max(self._ys)
+        else:
+            self._x_min = self._x_max = self._y_min = self._y_max = 0
 
         # 为每个线网分配颜色
         net_names = sorted(solution.results.keys())
-        net_color_map: Dict[str, str] = {}
-        for i, name in enumerate(net_names):
-            net_color_map[name] = self.NET_COLORS[i % len(self.NET_COLORS)]
+        self._net_colors: Dict[str, str] = {
+            name: _COLORS[i % len(_COLORS)]
+            for i, name in enumerate(net_names)
+        }
 
-        # 构建每层的节点到线网映射
-        node_net_map: Dict[Node, str] = {}
-        terminal_set: Set[Node] = set()
-        edge_set: Dict[str, List[Edge]] = {}
-        for net_name, result in solution.results.items():
-            if result.success:
-                for node in result.routed_nodes:
-                    node_net_map[node] = net_name
-                for terminal in result.net.terminals:
-                    terminal_set.add(terminal)
-                edge_set[net_name] = list(result.routed_edges)
+    # ------------------------------------------------------------------
+    # 公开接口
+    # ------------------------------------------------------------------
 
-        saved_files: List[str] = []
-
-        for layer in sorted(self.grid.layers):
-            svg_content = self._render_layer_svg(
-                layer, width, height, cell_size, padding,
-                solution, net_color_map, node_net_map,
-                terminal_set, edge_set, spacing_mgr, show_spacing,
-            )
-
-            filename = f"layer_{layer.lower()}.svg"
-            filepath = os.path.join(output_dir, filename)
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(svg_content)
-            saved_files.append(filepath)
-
-        return saved_files
-
-    def _render_layer_svg(
+    def save_svgs(
         self,
-        layer: str,
-        width: int,
-        height: int,
-        cell_size: int,
-        padding: int,
-        solution: RoutingSolution,
-        net_color_map: Dict[str, str],
-        node_net_map: Dict[Node, str],
-        terminal_set: Set[Node],
-        edge_set: Dict[str, List[Edge]],
-        spacing_mgr: Optional[SpacingManager],
-        show_spacing: bool,
-    ) -> str:
-        """渲染单层的SVG内容"""
-        svg_w = width * cell_size + padding * 2
-        svg_h = height * cell_size + padding * 2
+        save_dir: str = "results",
+        prefix: str = "",
+        layers: Optional[List[str]] = None,
+    ):
+        """
+        保存各层 SVG 文件。
 
-        parts: List[str] = []
-        parts.append(
-            f'<?xml version="1.0" encoding="UTF-8"?>\n'
-            f'<svg xmlns="http://www.w3.org/2000/svg" '
-            f'width="{svg_w}" height="{svg_h}" '
-            f'viewBox="0 0 {svg_w} {svg_h}">\n'
-        )
+        参数:
+            save_dir: 保存目录（不存在则创建）
+            prefix:   文件名前缀
+            layers:   要保存的层（None=所有出现的层）
+        """
+        os.makedirs(save_dir, exist_ok=True)
 
-        # 背景
-        parts.append(f'<rect width="{svg_w}" height="{svg_h}" fill="white"/>\n')
+        if layers is None:
+            all_layers = set(n[0] for n in self.grid.get_all_nodes())
+            layers = sorted(all_layers)
 
-        # 标题
-        parts.append(
-            f'<text x="{svg_w // 2}" y="25" text-anchor="middle" '
-            f'font-family="monospace" font-size="18" font-weight="bold" '
-            f'fill="#333">{layer} 层布线结果</text>\n'
-        )
+        for layer in layers:
+            filename = f"{prefix}layer_{layer.lower()}.svg"
+            filepath = os.path.join(save_dir, filename)
+            svg = self._render_layer(layer)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(svg)
+            logger.info(f"已保存 {filepath}")
 
-        def cx(x: int) -> float:
-            return padding + x * cell_size + cell_size / 2
+    # ------------------------------------------------------------------
+    # 内部渲染
+    # ------------------------------------------------------------------
 
-        def cy(y: int) -> float:
-            # SVG y轴向下，布线网格y轴向上，翻转
-            return padding + (height - 1 - y) * cell_size + cell_size / 2
+    def _coord_to_px(self, x: int, y: int) -> Tuple[float, float]:
+        """网格坐标 → SVG 像素坐标（y 轴翻转使 y=0 在底部）。"""
+        px = self.margin + (x - self._x_min) * self.cell_size
+        # SVG y 轴向下，网格 y 轴向上，因此翻转
+        py = self.margin + (self._y_max - y) * self.cell_size
+        return px, py
 
-        # 网格线
-        for x in range(width):
-            x_pos = cx(x)
-            parts.append(
-                f'<line x1="{x_pos}" y1="{padding}" '
-                f'x2="{x_pos}" y2="{padding + (height - 1) * cell_size + cell_size}" '
-                f'stroke="#E0E0E0" stroke-width="0.5"/>\n'
-            )
-        for y in range(height):
-            y_pos = cy(y)
-            parts.append(
-                f'<line x1="{padding}" y1="{y_pos}" '
-                f'x2="{padding + (width - 1) * cell_size + cell_size}" y2="{y_pos}" '
-                f'stroke="#E0E0E0" stroke-width="0.5"/>\n'
+    def _render_layer(self, layer: str) -> str:
+        """生成指定层的 SVG 字符串。"""
+        cs = self.cell_size
+        w = self.margin * 2 + (self._x_max - self._x_min) * cs + cs
+        h = self.margin * 2 + (self._y_max - self._y_min) * cs + cs
+
+        lines = []
+        lines.append(f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">')
+        lines.append(f'  <rect width="{w}" height="{h}" fill="{_LAYER_BG.get(layer, "#ffffff")}"/>')
+        lines.append(f'  <text x="10" y="20" font-size="16" fill="#333">{layer} Layer</text>')
+
+        # 网格节点（灰点）
+        layer_nodes = self.grid.get_nodes_on_layer(layer)
+        for node in layer_nodes:
+            px, py = self._coord_to_px(node[1], node[2])
+            lines.append(
+                f'  <circle cx="{px}" cy="{py}" r="3" fill="#cccccc" opacity="0.6"/>'
             )
 
-        # 坐标轴标注
-        for x in range(width):
-            parts.append(
-                f'<text x="{cx(x)}" y="{padding - 8}" text-anchor="middle" '
-                f'font-family="monospace" font-size="10" fill="#888">{x}</text>\n'
-            )
-        for y in range(height):
-            parts.append(
-                f'<text x="{padding - 12}" y="{cy(y) + 4}" text-anchor="end" '
-                f'font-family="monospace" font-size="10" fill="#888">{y}</text>\n'
-            )
-
-        # 禁区显示
-        if show_spacing and spacing_mgr:
-            for y in range(height):
-                for x in range(width):
-                    node = (layer, x, y)
-                    if node not in node_net_map and not spacing_mgr.is_available(node, "__check__"):
-                        parts.append(
-                            f'<rect x="{cx(x) - cell_size / 2 + 1}" '
-                            f'y="{cy(y) - cell_size / 2 + 1}" '
-                            f'width="{cell_size - 2}" height="{cell_size - 2}" '
-                            f'fill="#FEE2E2" opacity="0.5"/>\n'
-                        )
-
-        # 布线边（线段）
-        line_width = max(3, cell_size // 10)
-        for net_name, edges in edge_set.items():
-            color = net_color_map.get(net_name, "#999")
-            for u, v in edges:
-                if u[0] != layer or v[0] != layer:
+        # 网格同层边（浅灰虚线）
+        drawn_edges: Set[Tuple[Node, Node]] = set()
+        for node in layer_nodes:
+            for nb in self.grid.get_neighbors(node):
+                if nb[0] != layer:
                     continue
-                parts.append(
-                    f'<line x1="{cx(u[1])}" y1="{cy(u[2])}" '
-                    f'x2="{cx(v[1])}" y2="{cy(v[2])}" '
-                    f'stroke="{color}" stroke-width="{line_width}" '
-                    f'stroke-linecap="round"/>\n'
+                edge_key = (min(node, nb), max(node, nb))
+                if edge_key in drawn_edges:
+                    continue
+                drawn_edges.add(edge_key)
+                x1, y1 = self._coord_to_px(node[1], node[2])
+                x2, y2 = self._coord_to_px(nb[1], nb[2])
+                lines.append(
+                    f'  <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" '
+                    f'stroke="#e0e0e0" stroke-width="1" stroke-dasharray="4,4"/>'
                 )
 
-        # 布线节点（小圆点）——只画没有边连接到的孤立占用节点
-        dot_r = max(2, cell_size // 8)
-        for y in range(height):
-            for x in range(width):
-                node = (layer, x, y)
-                if node in node_net_map:
-                    net_name = node_net_map[node]
-                    color = net_color_map.get(net_name, "#999")
-                    parts.append(
-                        f'<circle cx="{cx(x)}" cy="{cy(y)}" r="{dot_r}" '
-                        f'fill="{color}"/>\n'
-                    )
+        # 布线路径
+        for net_name, result in self.solution.results.items():
+            if not result.success:
+                continue
+            color = self._net_colors.get(net_name, "#000000")
 
-        # 端口（大圆环 + 标签）
-        terminal_r = max(5, cell_size // 4)
-        for net_name, result in solution.results.items():
-            color = net_color_map.get(net_name, "#999")
+            for edge in result.routed_edges:
+                src, dst = edge
+                if src[0] != layer and dst[0] != layer:
+                    continue
+                # via 边在两层都画
+                if src[0] == layer:
+                    x1, y1 = self._coord_to_px(src[1], src[2])
+                else:
+                    x1, y1 = self._coord_to_px(src[1], src[2])
+                if dst[0] == layer:
+                    x2, y2 = self._coord_to_px(dst[1], dst[2])
+                else:
+                    x2, y2 = self._coord_to_px(dst[1], dst[2])
+
+                is_via = src[0] != dst[0]
+                stroke_w = 2 if not is_via else 1
+                dash = "" if not is_via else 'stroke-dasharray="3,3"'
+                lines.append(
+                    f'  <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" '
+                    f'stroke="{color}" stroke-width="{stroke_w}" {dash} opacity="0.85"/>'
+                )
+
+        # Terminal 端口（大圆点）
+        for net_name, result in self.solution.results.items():
+            if not result.success:
+                continue
+            color = self._net_colors.get(net_name, "#000000")
             for terminal in result.net.terminals:
                 if terminal[0] != layer:
                     continue
-                tx, ty = terminal[1], terminal[2]
-                parts.append(
-                    f'<circle cx="{cx(tx)}" cy="{cy(ty)}" r="{terminal_r}" '
-                    f'fill="{color}" stroke="white" stroke-width="2"/>\n'
+                px, py = self._coord_to_px(terminal[1], terminal[2])
+                lines.append(
+                    f'  <circle cx="{px}" cy="{py}" r="7" fill="{color}" '
+                    f'stroke="white" stroke-width="1.5"/>'
                 )
-                # Via标记：如果该端口连接到其他层
-                parts.append(
-                    f'<text x="{cx(tx)}" y="{cy(ty) + 3}" text-anchor="middle" '
-                    f'font-family="monospace" font-size="{max(8, cell_size // 5)}" '
-                    f'font-weight="bold" fill="white">'
-                    f'{net_name[:3]}</text>\n'
+                lines.append(
+                    f'  <text x="{px+9}" y="{py+4}" font-size="9" fill="{color}">'
+                    f'{net_name}</text>'
                 )
+
+        # Pin 引出点（星形 / 菱形标记）
+        for net_name, result in self.solution.results.items():
+            if result.pin_point is None:
+                continue
+            pin = result.pin_point
+            if pin[0] != layer:
+                continue
+            color = self._net_colors.get(net_name, "#000000")
+            px, py = self._coord_to_px(pin[1], pin[2])
+            s = 8
+            # 绘制菱形
+            pts = (
+                f"{px},{py-s} {px+s},{py} {px},{py+s} {px-s},{py}"
+            )
+            lines.append(
+                f'  <polygon points="{pts}" fill="{color}" stroke="black" stroke-width="1"/>'
+            )
+            lines.append(
+                f'  <text x="{px+10}" y="{py+4}" font-size="9" fill="black">PIN</text>'
+            )
 
         # 图例
-        legend_y = svg_h - 30
-        legend_x = padding
-        for i, net_name in enumerate(sorted(solution.results.keys())):
-            result = solution.results[net_name]
-            color = net_color_map.get(net_name, "#999")
-            status = "OK" if result.success else "FAIL"
-            lx = legend_x + i * 120
-            if lx + 110 > svg_w:
+        legend_y = h - self.margin + 10
+        for i, (net_name, color) in enumerate(self._net_colors.items()):
+            lx = self.margin + i * 80
+            if lx + 70 > w:
                 break
-            parts.append(
-                f'<rect x="{lx}" y="{legend_y - 8}" width="12" height="12" '
-                f'fill="{color}" rx="2"/>\n'
+            lines.append(
+                f'  <rect x="{lx}" y="{legend_y}" width="12" height="12" fill="{color}"/>'
             )
-            parts.append(
-                f'<text x="{lx + 16}" y="{legend_y + 2}" '
-                f'font-family="monospace" font-size="11" fill="#333">'
-                f'{net_name}({status})</text>\n'
+            lines.append(
+                f'  <text x="{lx+15}" y="{legend_y+11}" font-size="10" fill="#333">'
+                f'{net_name}</text>'
             )
 
-        parts.append("</svg>\n")
-        return "".join(parts)
+        lines.append('</svg>')
+        return "\n".join(lines)

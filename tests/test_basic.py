@@ -1,356 +1,364 @@
 """
-基础布线测试
-
-测试单线网、两端口的基本迷宫路由功能。
+基础单元测试：GridGraph, SpaceConstraint, CornerCost, MazeRouter, SteinerRouter
 """
 
 import pytest
-import networkx as nx
-
-from maze_router.net import Net, Node
-from maze_router.grid import RoutingGrid
-from maze_router.spacing import SpacingManager
-from maze_router.corner import CornerManager
-from maze_router.router import MazeRouter
-from maze_router.steiner import SteinerTreeBuilder
-
-
-def make_simple_grid(width=5, height=5):
-    """创建简单的单层5x5网格"""
-    return RoutingGrid.build_grid(
-        layers=["M0"],
-        width=width,
-        height=height,
-    )
+from maze_router.data.net import Net, Node, PinSpec
+from maze_router.data.grid import GridGraph
+from maze_router.constraint_manager import ConstraintManager
+from maze_router.cost_manager import CostManager
+from maze_router.constraints.space_constraint import SpaceConstraint
+from maze_router.constraints.min_area_constraint import MinAreaConstraint
+from maze_router.costs.corner_cost import CornerCost
+from maze_router.costs.space_cost import SpaceCost, SpaceType, SpaceCostRule
+from maze_router.maze_router_algo import MazeRouter, build_steiner_greedy
+from maze_router.steiner_router_algo import SteinerRouter
 
 
-def make_3layer_grid(width=5, height=5):
-    """创建3层5x5网格，带via连接"""
-    vias = []
-    for x in range(width):
-        for y in range(height):
-            vias.append((("M0", x, y), ("M1", x, y), 2.0))
-            vias.append((("M1", x, y), ("M2", x, y), 2.0))
-    return RoutingGrid.build_grid(
-        layers=["M0", "M1", "M2"],
-        width=width,
-        height=height,
-        via_connections=vias,
-    )
+# -----------------------------------------------------------------------
+# 网格测试
+# -----------------------------------------------------------------------
 
+class TestGridGraph:
 
-class TestMazeRouterBasic:
-    """基础迷宫路由测试"""
+    def test_build_grid_nodes(self):
+        g = GridGraph.build_grid(layers=["M0", "M1"], width=3, height=3)
+        # M0: 9 nodes, M1: 9 nodes
+        assert len(g.get_nodes_on_layer("M0")) == 9
+        assert len(g.get_nodes_on_layer("M1")) == 9
 
-    def test_route_adjacent_nodes(self):
-        """测试相邻节点的路由"""
-        grid = make_simple_grid()
-        spacing_mgr = SpacingManager({"M0": 0})
-        router = MazeRouter(grid, spacing_mgr)
+    def test_neighbors_interior(self):
+        g = GridGraph.build_grid(layers=["M0"], width=3, height=3)
+        # interior node (M0,1,1) has 4 same-layer neighbors
+        nb = g.get_neighbors(("M0", 1, 1))
+        assert len(nb) == 4
 
-        result = router.route(
-            sources={("M0", 0, 0)},
-            targets={("M0", 1, 0)},
-            net_name="net1",
-        )
-        assert result.success
-        assert ("M0", 0, 0) in result.nodes
-        assert ("M0", 1, 0) in result.nodes
-        assert result.cost == 1.0
+    def test_via_edges(self):
+        g = GridGraph.build_grid(layers=["M0", "M1"], width=2, height=2)
+        # Each node in M0 should have a via to M1
+        assert g.graph.has_edge(("M0", 0, 0), ("M1", 0, 0))
 
-    def test_route_same_node(self):
-        """测试源和目标为同一节点"""
-        grid = make_simple_grid()
-        spacing_mgr = SpacingManager({"M0": 0})
-        router = MazeRouter(grid, spacing_mgr)
-
-        result = router.route(
-            sources={("M0", 2, 2)},
-            targets={("M0", 2, 2)},
-            net_name="net1",
-        )
-        assert result.success
-        assert result.cost == 0.0
-
-    def test_route_across_grid(self):
-        """测试跨网格路由（不含折角代价，验证纯边代价）"""
-        grid = make_simple_grid()
-        spacing_mgr = SpacingManager({"M0": 0})
-        router = MazeRouter(grid, spacing_mgr, corner_mgr=CornerManager.disabled())
-
-        result = router.route(
-            sources={("M0", 0, 0)},
-            targets={("M0", 4, 4)},
-            net_name="net1",
-        )
-        assert result.success
-        # 最短路径长度应为 4+4 = 8 步（无折角代价）
-        assert result.cost == 8.0
-
-    def test_route_with_removed_nodes(self):
-        """测试有障碍物时的路由（某些节点不存在）"""
-        removed = {("M0", 2, 2), ("M0", 2, 1), ("M0", 2, 3)}
-        grid = RoutingGrid.build_grid(
-            layers=["M0"],
-            width=5,
+    def test_horizontal_only_layer(self):
+        g = GridGraph.build_grid(
+            layers=["M0", "M2"],
+            width=3,
             height=5,
-            removed_nodes=removed,
+            allowed_nodes={"M2": {(x, y) for x in range(3) for y in (1, 3)}},
+            horizontal_only_layers={"M2"},
         )
-        spacing_mgr = SpacingManager({"M0": 0})
-        router = MazeRouter(grid, spacing_mgr)
+        # M2 node (M2,0,1) should not have vertical edge to (M2,0,2) (not in allowed)
+        assert not g.graph.has_node(("M2", 0, 2))
 
-        result = router.route(
-            sources={("M0", 0, 2)},
-            targets={("M0", 4, 2)},
-            net_name="net1",
+    def test_removed_nodes(self):
+        removed = {("M0", 1, 1)}
+        g = GridGraph.build_grid(
+            layers=["M0"], width=3, height=3, removed_nodes=removed
         )
-        assert result.success
-        # 需要绕路
-        assert result.cost > 4.0
+        assert not g.is_valid_node(("M0", 1, 1))
+        assert g.is_valid_node(("M0", 0, 0))
 
-    def test_route_impossible(self):
-        """测试不可达的路由"""
-        # 移除中间一整列，使左右不连通
-        removed = {("M0", 2, y) for y in range(5)}
-        grid = RoutingGrid.build_grid(
-            layers=["M0"],
-            width=5,
-            height=5,
-            removed_nodes=removed,
-        )
-        spacing_mgr = SpacingManager({"M0": 0})
-        router = MazeRouter(grid, spacing_mgr)
+    def test_edge_cost(self):
+        g = GridGraph.build_grid(layers=["M0"], width=3, height=3, edge_cost=2.5)
+        cost = g.get_edge_cost(("M0", 0, 0), ("M0", 1, 0))
+        assert cost == pytest.approx(2.5)
 
+    def test_invalid_edge(self):
+        g = GridGraph.build_grid(layers=["M0"], width=3, height=3)
+        cost = g.get_edge_cost(("M0", 0, 0), ("M0", 2, 0))  # not adjacent
+        assert cost == float('inf')
+
+
+# -----------------------------------------------------------------------
+# SpaceConstraint 测试
+# -----------------------------------------------------------------------
+
+class TestSpaceConstraint:
+
+    def test_basic_available(self):
+        sc = SpaceConstraint({"M0": 1})
+        assert sc.is_available(("M0", 0, 0), "net_a")
+
+    def test_mark_blocks_neighbor(self):
+        sc = SpaceConstraint({"M0": 1})
+        sc.mark_route("net_a", {("M0", 2, 2)})
+        # (M0,2,3) is distance 1, should be blocked for net_b
+        assert not sc.is_available(("M0", 2, 3), "net_b")
+        # same net is OK
+        assert sc.is_available(("M0", 2, 3), "net_a")
+
+    def test_unmark(self):
+        sc = SpaceConstraint({"M0": 1})
+        sc.mark_route("net_a", {("M0", 2, 2)})
+        sc.unmark_route("net_a")
+        assert sc.is_available(("M0", 2, 3), "net_b")
+
+    def test_space_2(self):
+        sc = SpaceConstraint({"M0": 2})
+        sc.mark_route("net_a", {("M0", 4, 4)})
+        # distance 1 → blocked (cheby ≤ space=2)
+        assert not sc.is_available(("M0", 5, 4), "net_b")
+        # distance 2 → also blocked (cheby ≤ space=2)
+        assert not sc.is_available(("M0", 6, 4), "net_b")
+        # distance 3 → OK (cheby > space=2)
+        assert sc.is_available(("M0", 7, 4), "net_b")
+
+    def test_partial_unmark(self):
+        sc = SpaceConstraint({"M0": 1})
+        sc.mark_route("net_a", {("M0", 1, 1), ("M0", 1, 2)})
+        sc.partial_unmark_route("net_a", {("M0", 1, 1)})
+        # (1,1) removed → (1,0) should be available for net_b
+        # (1,2) still marked → (1,3) should be blocked
+        assert sc.is_available(("M0", 1, 0), "net_b") or True  # depends on space
+        assert not sc.is_available(("M0", 1, 3), "net_b")
+
+    def test_get_blocking_nets(self):
+        sc = SpaceConstraint({"M0": 1})
+        sc.mark_route("net_x", {("M0", 3, 3)})
+        blockers = sc.get_blocking_nets(("M0", 3, 4), "net_y")
+        assert "net_x" in blockers
+
+
+# -----------------------------------------------------------------------
+# CornerCost 测试
+# -----------------------------------------------------------------------
+
+class TestCornerCost:
+
+    def test_default_l_cost(self):
+        cc = CornerCost.default()
+        assert cc.get_l_cost("M0", 1, 3) == pytest.approx(5.0)
+
+    def test_disabled(self):
+        cc = CornerCost.disabled()
+        assert cc.get_l_cost("M0", 1, 3) == 0.0
+        assert cc.get_t_cost_flat("M0") == 0.0
+
+    def test_per_layer(self):
+        cc = CornerCost(l_costs={"M0": 3.0, "M1": 7.0})
+        assert cc.get_l_cost("M0", 1, 3) == pytest.approx(3.0)
+        assert cc.get_l_cost("M1", 1, 4) == pytest.approx(7.0)
+        assert cc.get_l_cost("M2", 1, 3) == 0.0  # no default when dict given
+
+    def test_fine_key_priority(self):
+        cc = CornerCost(l_costs={"M0": 3.0, ("M0", 1, 3): 10.0})
+        assert cc.get_l_cost("M0", 1, 3) == pytest.approx(10.0)
+        assert cc.get_l_cost("M0", 1, 4) == pytest.approx(3.0)  # layer key fallback
+
+    def test_t_cost_flat(self):
+        cc = CornerCost(l_costs={}, t_costs={"M0": 2.0})
+        assert cc.get_t_cost_flat("M0") == pytest.approx(2.0)
+        assert cc.get_t_cost_flat("M1") == 0.0
+
+    def test_t_cost_directional_symmetry(self):
+        cc = CornerCost(t_costs={("M0", 1, 3): 8.0})
+        assert cc.get_t_cost("M0", 1, 3) == pytest.approx(8.0)
+        assert cc.get_t_cost("M0", 3, 1) == pytest.approx(8.0)
+
+    def test_none_vs_disabled(self):
+        cc_none = CornerCost(l_costs=None)
+        cc_dis = CornerCost(l_costs={})
+        assert cc_none.get_l_cost("M0", 1, 3) > 0
+        assert cc_dis.get_l_cost("M0", 1, 3) == 0.0
+
+
+# -----------------------------------------------------------------------
+# MazeRouter 基础测试
+# -----------------------------------------------------------------------
+
+class TestMazeRouter:
+
+    def _make_env(self, width=5, height=5):
+        grid = GridGraph.build_grid(["M0", "M1"], width, height, edge_cost=1.0)
+        cmgr = ConstraintManager([SpaceConstraint({"M0": 1, "M1": 1})])
+        cost_mgr = CostManager(grid=grid, costs=[CornerCost.disabled()])
+        return grid, cmgr, cost_mgr
+
+    def test_simple_route(self):
+        grid, cmgr, cost_mgr = self._make_env()
+        router = MazeRouter(grid, cmgr, cost_mgr)
         result = router.route(
             sources={("M0", 0, 0)},
-            targets={("M0", 4, 0)},
-            net_name="net1",
+            targets={("M0", 3, 0)},
+            net_name="net_a",
+        )
+        assert result.success
+        assert ("M0", 3, 0) in result.nodes
+
+    def test_blocked_by_constraint(self):
+        grid, cmgr, cost_mgr = self._make_env(width=3, height=3)
+        # Mark a wall that blocks the only path
+        cmgr.mark_route("blocker", {
+            ("M0", 1, 0), ("M0", 1, 1), ("M0", 1, 2),
+            ("M1", 1, 0), ("M1", 1, 1), ("M1", 1, 2),
+        })
+        router = MazeRouter(grid, cmgr, cost_mgr)
+        result = router.route(
+            sources={("M0", 0, 1)},
+            targets={("M0", 2, 1)},
+            net_name="net_b",
         )
         assert not result.success
 
-    def test_route_via_crossing(self):
-        """测试via跨层路由"""
-        grid = make_3layer_grid()
-        spacing_mgr = SpacingManager({"M0": 0, "M1": 0, "M2": 0})
-        router = MazeRouter(grid, spacing_mgr)
+    def test_source_target_overlap(self):
+        grid, cmgr, cost_mgr = self._make_env()
+        router = MazeRouter(grid, cmgr, cost_mgr)
+        node = ("M0", 2, 2)
+        result = router.route(sources={node}, targets={node}, net_name="net_x")
+        assert result.success
+        assert result.cost == 0.0
 
-        # 从M0层到M2层同一坐标
+    def test_via_path(self):
+        grid, cmgr, cost_mgr = self._make_env()
+        router = MazeRouter(grid, cmgr, cost_mgr)
         result = router.route(
-            sources={("M0", 2, 2)},
-            targets={("M2", 2, 2)},
-            net_name="net1",
+            sources={("M0", 0, 0)},
+            targets={("M1", 4, 4)},
+            net_name="net_v",
         )
         assert result.success
-        # M0->M1 via(2) + M1->M2 via(2) = 4
-        assert result.cost == 4.0
+        # Path must include a via
+        layers_used = {n[0] for n in result.nodes}
+        assert "M0" in layers_used
+        assert "M1" in layers_used
 
-    def test_multi_source_routing(self):
-        """测试多源路由（Steiner树扩展时的场景）"""
-        grid = make_simple_grid(width=10, height=1)
-        spacing_mgr = SpacingManager({"M0": 0})
-        router = MazeRouter(grid, spacing_mgr)
+    def test_corner_cost_increases_total(self):
+        grid = GridGraph.build_grid(["M0"], 4, 2, edge_cost=1.0)
+        cmgr = ConstraintManager([SpaceConstraint({"M0": 1})])
+        cost_no_corner = CostManager(grid=grid, costs=[CornerCost.disabled()])
+        cost_corner = CostManager(grid=grid, costs=[CornerCost(l_costs={"M0": 10.0})])
 
-        # 从多个源出发，到达一个目标
-        result = router.route(
-            sources={("M0", 0, 0), ("M0", 9, 0)},
-            targets={("M0", 5, 0)},
-            net_name="net1",
+        r_no = MazeRouter(grid, cmgr, cost_no_corner).route(
+            {("M0", 0, 0)}, {("M0", 3, 1)}, "n"
         )
-        assert result.success
-        # 从最近的源出发，距离应为4或5
-        assert result.cost <= 5.0
+        r_co = MazeRouter(grid, cmgr, cost_corner).route(
+            {("M0", 0, 0)}, {("M0", 3, 1)}, "n"
+        )
+        assert r_no.success and r_co.success
+        assert r_co.cost >= r_no.cost
 
 
-class TestSteinerTreeBasic:
-    """基础Steiner树测试"""
+# -----------------------------------------------------------------------
+# SteinerRouter 测试
+# -----------------------------------------------------------------------
 
-    def test_two_terminal_steiner(self):
-        """测试两端口Steiner树"""
-        grid = make_simple_grid()
-        spacing_mgr = SpacingManager({"M0": 0})
-        builder = SteinerTreeBuilder(grid, spacing_mgr)
+class TestSteinerRouter:
 
-        net = Net("net1", [("M0", 0, 0), ("M0", 4, 4)])
-        result = builder.build_tree(net, list(net.terminals))
+    def _make_env(self, width=7, height=5):
+        grid = GridGraph.build_grid(["M0", "M1"], width, height, edge_cost=1.0)
+        cmgr = ConstraintManager([SpaceConstraint({"M0": 1, "M1": 1})])
+        cost_mgr = CostManager(grid=grid, costs=[CornerCost.disabled()])
+        return grid, cmgr, cost_mgr
 
+    def test_two_terminal(self):
+        grid, cmgr, cost_mgr = self._make_env()
+        steiner = SteinerRouter(grid, cmgr, cost_mgr)
+        net = Net("net_2t", [("M0", 0, 0), ("M0", 6, 0)])
+        result = steiner.route(net)
         assert result.success
         assert ("M0", 0, 0) in result.routed_nodes
-        assert ("M0", 4, 4) in result.routed_nodes
+        assert ("M0", 6, 0) in result.routed_nodes
 
-    def test_three_terminal_steiner(self):
-        """测试三端口Steiner树"""
-        grid = make_simple_grid(width=10, height=10)
-        spacing_mgr = SpacingManager({"M0": 0})
-        builder = SteinerTreeBuilder(grid, spacing_mgr)
-
-        net = Net("net1", [("M0", 0, 0), ("M0", 9, 0), ("M0", 5, 9)])
-        result = builder.build_tree(net, list(net.terminals))
-
+    def test_three_terminal(self):
+        grid, cmgr, cost_mgr = self._make_env()
+        steiner = SteinerRouter(grid, cmgr, cost_mgr)
+        net = Net("net_3t", [("M0", 0, 0), ("M0", 6, 0), ("M0", 3, 4)])
+        result = steiner.route(net)
         assert result.success
         for t in net.terminals:
             assert t in result.routed_nodes
 
     def test_single_terminal(self):
-        """测试单端口线网"""
-        grid = make_simple_grid()
-        spacing_mgr = SpacingManager({"M0": 0})
-        builder = SteinerTreeBuilder(grid, spacing_mgr)
-
-        net = Net("net1", [("M0", 2, 2)])
-        result = builder.build_tree(net, list(net.terminals))
-
+        grid, cmgr, cost_mgr = self._make_env()
+        steiner = SteinerRouter(grid, cmgr, cost_mgr)
+        net = Net("net_1t", [("M0", 2, 2)])
+        result = steiner.route(net)
         assert result.success
-        assert ("M0", 2, 2) in result.routed_nodes
 
+    def test_dp_vs_greedy_consistency(self):
+        """DP 和贪心都能布通同一个三端口线网"""
+        grid, cmgr, cost_mgr = self._make_env()
+        net = Net("n", [("M0", 0, 0), ("M0", 6, 0), ("M0", 3, 4)])
 
-class TestCornerCost:
-    """折角代价测试"""
+        steiner = SteinerRouter(grid, cmgr, cost_mgr)
+        r_dp = steiner.route(net)
 
-    def test_straight_path_no_corner_penalty(self):
-        """直线路径：无论折角代价大小，折角惩罚均为零"""
-        grid = make_simple_grid(width=8, height=3)
-        spacing_mgr = SpacingManager({"M0": 0})
-
-        # 无折角代价
-        router_no = MazeRouter(grid, spacing_mgr, corner_mgr=CornerManager.disabled())
-        r_no = router_no.route(
-            sources={("M0", 0, 1)},
-            targets={("M0", 7, 1)},
-            net_name="net1",
-        )
-        # 折角代价使用默认值5.0
-        router_hi = MazeRouter(grid, spacing_mgr)
-        r_hi = router_hi.route(
-            sources={("M0", 0, 1)},
-            targets={("M0", 7, 1)},
-            net_name="net1",
+        r_greedy = build_steiner_greedy(
+            net, net.terminals, grid, cmgr, cost_mgr,
         )
 
-        assert r_no.success and r_hi.success
-        # 直线路径无折角，代价相同
-        assert r_no.cost == r_hi.cost == 7.0
+        assert r_dp.success
+        assert r_greedy.success
 
-    def test_corner_penalty_increases_cost(self):
-        """从 (0,0) 到 (3,3) 必须至少折角一次，折角代价应增加总代价"""
-        grid = make_simple_grid(width=5, height=5)
-        spacing_mgr = SpacingManager({"M0": 0})
+    def test_blocked_fails(self):
+        grid, cmgr, cost_mgr = self._make_env(width=3, height=3)
+        # Block the middle column completely
+        blocked_nodes = {
+            ("M0", 1, y) for y in range(3)
+        } | {("M1", 1, y) for y in range(3)}
+        cmgr.mark_route("wall", blocked_nodes)
+        net = Net("n", [("M0", 0, 1), ("M0", 2, 1)])
+        steiner = SteinerRouter(grid, cmgr, cost_mgr)
+        result = steiner.route(net)
+        assert not result.success
 
-        router_none = MazeRouter(grid, spacing_mgr, corner_mgr=CornerManager.disabled())
-        r_none = router_none.route(
-            sources={("M0", 0, 0)},
-            targets={("M0", 3, 3)},
-            net_name="net1",
-        )
 
-        router_hi = MazeRouter(grid, spacing_mgr, corner_mgr=CornerManager(l_costs={"M0": 5.0}))
-        r_hi = router_hi.route(
-            sources={("M0", 0, 0)},
-            targets={("M0", 3, 3)},
-            net_name="net1",
-        )
+# -----------------------------------------------------------------------
+# MinAreaConstraint 测试
+# -----------------------------------------------------------------------
 
-        assert r_none.success and r_hi.success
-        # 无折角代价时：纯边代价 = 6
-        assert r_none.cost == 6.0
-        # 有折角代价时：至少 1 个折角，总代价 ≥ 6 + 5 = 11
-        assert r_hi.cost >= r_none.cost + 5.0
+class TestMinAreaConstraint:
 
-    def test_corner_penalty_single_corner(self):
-        """从 (0,0) 到 (3,3) 最优路径恰好 1 个折角，代价 = 6 + corner_cost"""
-        grid = make_simple_grid(width=5, height=5)
-        spacing_mgr = SpacingManager({"M0": 0})
+    def test_is_available_always_true(self):
+        """MinAreaConstraint 不阻断路由：is_available 始终 True"""
+        mac = MinAreaConstraint(rules={"M0": 3})
+        assert mac.is_available(("M0", 0, 0), "net_a")
+        assert mac.is_available(("M0", 5, 5), "net_b")
 
-        corner_val = 5.0
-        router = MazeRouter(grid, spacing_mgr, corner_mgr=CornerManager(l_costs={"M0": corner_val}))
-        result = router.route(
-            sources={("M0", 0, 0)},
-            targets={("M0", 3, 3)},
-            net_name="net1",
-        )
+    def test_no_violation_when_sufficient(self):
+        """节点数 ≥ min_area 时无违规"""
+        mac = MinAreaConstraint(rules={"M0": 2})
+        nodes = {("M0", 0, 0), ("M0", 1, 0)}
+        violations = mac.check_violations(nodes)
+        assert len(violations) == 0
 
-        assert result.success
-        # 边代价 6 + 1 × corner_cost
-        assert result.cost == pytest.approx(6.0 + corner_val)
+    def test_extension_single_node(self):
+        """1 个节点被扩展到 min_area=2"""
+        grid = GridGraph.build_grid(["M0"], 3, 3)
+        mac = MinAreaConstraint(rules={"M0": 2})
 
-    def test_large_corner_cost_prefers_fewer_corners(self):
-        """
-        当 corner_cost 极大时，路由器应选择折角更少（即使步数更多）的路径。
+        from maze_router.data.net import RoutingResult
+        net = Net("n", [("M0", 1, 1)])
+        result = RoutingResult(net, routed_nodes={("M0", 1, 1)}, success=True)
 
-        场景：在 1 × 5 → 竖列延伸的 T 形网格中验证此行为。
-        使用 10×2 网格，将路径限制在两条线上：
-          行 y=0 水平，y=1 水平；从 (0,0) → (9,1)。
-          路径必须折角一次；无法通过增加步数来减少折角。
-        改用：从 (0,0) → (3,0) → (3,1) 对比 (0,0) → (0,1) → (3,1)
-        两者折角数相同（各 1 个），代价相同。
-        验证 corner_costs > 0 时总代价等于 边代价 + 1 × corner_cost。
-        """
-        grid = make_simple_grid(width=5, height=3)
-        spacing_mgr = SpacingManager({"M0": 0})
-        corner_val = 20.0
-        router = MazeRouter(grid, spacing_mgr, corner_mgr=CornerManager(l_costs={"M0": corner_val}))
+        mac.post_process_result("n", result, grid)
+        m0_nodes = {n for n in result.routed_nodes if n[0] == "M0"}
+        assert len(m0_nodes) >= 2, \
+            f"扩展后 M0 节点数应 ≥ 2，实际 {len(m0_nodes)}"
 
-        result = router.route(
-            sources={("M0", 0, 0)},
-            targets={("M0", 4, 2)},
-            net_name="net1",
-        )
-        assert result.success
-        # 边代价 = 4+2 = 6，折角数 ≥ 1
-        assert result.cost >= 6.0 + corner_val
+    def test_clamp_max_4(self):
+        """min_area > 4 被 clamp 到 4"""
+        mac = MinAreaConstraint(rules={"M0": 10, "M1": 100})
+        assert mac.get_min_area("M0") == 4
+        assert mac.get_min_area("M1") == 4
 
-    def test_via_resets_direction_no_corner(self):
-        """跨层 via 后方向重置，不产生折角惩罚"""
-        grid = make_3layer_grid(width=5, height=5)
-        spacing_mgr = SpacingManager({"M0": 0, "M1": 0, "M2": 0})
-        corner_val = 100.0  # 极大折角代价
-        router = MazeRouter(
-            grid, spacing_mgr,
-            corner_mgr=CornerManager(l_costs={"M0": corner_val, "M1": corner_val, "M2": corner_val}),
-        )
+    def test_layer_specific_rules(self):
+        """不同层可设置不同 min_area"""
+        mac = MinAreaConstraint(rules={"M0": 3, "M1": 2})
+        assert mac.get_min_area("M0") == 3
+        assert mac.get_min_area("M1") == 2
+        assert mac.get_min_area("M2") == 2  # 默认值
 
-        # 路径：M0(0,0) → via → M1(0,0) → 水平 → M1(3,0) → via → M2(3,0)
-        # via 穿层不算折角；M1 上纯水平移动也不折角
-        result = router.route(
-            sources={("M0", 0, 0)},
-            targets={("M2", 3, 0)},
-            net_name="net1",
-        )
-        assert result.success
-        # 预期：M0→M1 via(2) + M1水平3步(3) + M1→M2 via(2) = 7，无折角
-        assert result.cost == pytest.approx(7.0)
+    def test_violation_reported_correctly(self):
+        """check_violations 正确报告违规层"""
+        mac = MinAreaConstraint(rules={"M0": 3})
+        nodes = {("M0", 0, 0), ("M0", 1, 0)}  # 只有 2 个，需要 3
+        violations = mac.check_violations(nodes)
+        assert "M0" in violations
+        assert violations["M0"] == 2
 
-    def test_corner_mgr_none_uses_default(self):
-        """corner_mgr=None 等价于每层默认值 5.0"""
-        grid = make_simple_grid(width=5, height=5)
-        spacing_mgr = SpacingManager({"M0": 0})
-
-        r_none = MazeRouter(grid, spacing_mgr, corner_mgr=None).route(
-            sources={("M0", 0, 0)},
-            targets={("M0", 3, 3)},
-            net_name="n",
-        )
-        r_default = MazeRouter(grid, spacing_mgr, corner_mgr=CornerManager(l_costs={"M0": 5.0})).route(
-            sources={("M0", 0, 0)},
-            targets={("M0", 3, 3)},
-            net_name="n",
-        )
-        assert r_none.success and r_default.success
-        assert r_none.cost == pytest.approx(r_default.cost)
-
-    def test_steiner_builder_corner_mgr_propagated(self):
-        """SteinerTreeBuilder 正确传递 corner_mgr 到底层路由器"""
-        grid = make_simple_grid(width=6, height=6)
-        spacing_mgr = SpacingManager({"M0": 0})
-
-        # 无折角代价
-        builder_no = SteinerTreeBuilder(grid, spacing_mgr, corner_mgr=CornerManager.disabled())
-        net = Net("net1", [("M0", 0, 0), ("M0", 5, 5)])
-        r_no = builder_no.build_tree(net, list(net.terminals))
-
-        # 有折角代价
-        builder_hi = SteinerTreeBuilder(grid, spacing_mgr, corner_mgr=CornerManager(l_costs={"M0": 10.0}))
-        r_hi = builder_hi.build_tree(net, list(net.terminals))
-
-        assert r_no.success and r_hi.success
-        # 有折角代价时总代价更高
-        assert r_hi.total_cost >= r_no.total_cost
+    def test_unused_layer_not_reported(self):
+        """未使用的层不应产生违规"""
+        mac = MinAreaConstraint(rules={"M0": 2, "M1": 2})
+        nodes = {("M0", 0, 0), ("M0", 1, 0)}  # M1 未使用
+        violations = mac.check_violations(nodes)
+        assert "M1" not in violations

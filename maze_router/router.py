@@ -1,323 +1,166 @@
 """
-核心迷宫路由器模块
+Router: 派发层
 
-基于多源Dijkstra/A*算法的单路径布线引擎。
-支持间距约束、cable_locs约束、可配置代价函数和折角(corner)代价。
+负责根据 RipupStrategy 决策调用 SteinerRouter（DP）或 MazeRouter（贪心），
+并在路由完成后处理 Pin 引出逻辑。
 
-折角代价说明：
-  折角发生在同层移动方向改变时（如由横向变纵向）。跨层 via 会重置方向，
-  不触发折角惩罚。路由器通过将 (node, incoming_dir) 作为 Dijkstra 状态来
-  精确计算折角代价，而非用平均值近似。
-
-方向编码（模块级常量，供 steiner_router 共用）：
-  _DIR_NONE = 0  —— 初始/via后，无方向
-  1=向右, 2=向左, 3=向上, 4=向下
+Pin 引出逻辑（net.pin_spec 不为 None 时）：
+  1. 检查 routed_nodes 中是否有满足目标层的节点 → 选最近的作为 pin_point
+  2. 若无，找可通过 via 到达目标层的节点：
+     a. 走 via 到目标层
+     b. 从 via 点找第一个可用邻居
+     c. 邻居作为 pin_point
 """
 
-import heapq
-from typing import List, Set, Tuple, Optional, Callable, Dict
+from __future__ import annotations
+import logging
+from typing import List, Optional, Set
 
-from maze_router.net import Node, Edge
-from maze_router.grid import RoutingGrid
-from maze_router.spacing import SpacingManager
-from maze_router.corner import CornerManager
+from maze_router.data.net import Net, Node, RoutingResult
+from maze_router.data.grid import GridGraph
+from maze_router.constraint_manager import ConstraintManager
+from maze_router.cost_manager import CostManager
+from maze_router.ripup_strategy import RipupStrategy, RouterType
+from maze_router.maze_router_algo import MazeRouter, build_steiner_greedy
+from maze_router.steiner_router_algo import SteinerRouter
 
+logger = logging.getLogger(__name__)
 
-# ======================================================================
-# 方向工具（模块级，供 steiner_router 导入复用）
-# ======================================================================
-
-_DIR_NONE = 0
-_DIR_MAP: Dict[Tuple[int, int], int] = {
-    (1,  0): 1,
-    (-1, 0): 2,
-    (0,  1): 3,
-    (0, -1): 4,
-}
-_N_DIRS = 5
-
-DEFAULT_CORNER_COST = 5.0
+# pin 引出时要求 via 点周围的最小可用空间（Manhattan 邻居数，1 即够）
+_PIN_MIN_NEIGHBORS = 1
 
 
-def _move_dir_code(src: Node, dst: Node) -> int:
+class Router:
     """
-    计算从 src 到 dst 的移动方向编码。
+    路由器派发层。
 
-    跨层 via（层名不同）返回 _DIR_NONE，表示方向重置；
-    同层移动返回 1-4 对应方向码。
-    """
-    if src[0] != dst[0]:
-        return _DIR_NONE
-    dx, dy = dst[1] - src[1], dst[2] - src[2]
-    return _DIR_MAP.get((dx, dy), _DIR_NONE)
-
-
-def _resolve_corner_mgr(
-    corner_mgr: Optional[CornerManager],
-    corner_costs: Optional[Dict[str, float]] = None,
-) -> CornerManager:
-    """
-    解析折角代价参数，返回 CornerManager 实例。
-
-    优先使用 corner_mgr；若未提供则从向后兼容的 corner_costs 字典构建。
-    - corner_mgr 非 None → 直接使用
-    - corner_mgr=None, corner_costs=None → 默认 CornerManager（L=5.0，T=0）
-    - corner_mgr=None, corner_costs={} → 禁用所有折角代价
-    - corner_mgr=None, corner_costs={...} → 按层L代价，无T代价
-    """
-    if corner_mgr is not None:
-        return corner_mgr
-    return CornerManager(l_costs=corner_costs, t_costs={} if corner_costs is not None else None)
-
-
-# 向后兼容别名（供 steiner_router、steiner、ripup 等旧代码调用）
-def _resolve_corner_costs(
-    corner_costs: Optional[Dict[str, float]]
-) -> 'CornerManager':
-    """向后兼容：从 Dict[str, float] 构建 CornerManager。"""
-    return _resolve_corner_mgr(None, corner_costs)
-
-
-class PathResult:
-    """单次路径搜索的结果"""
-
-    def __init__(
-        self,
-        nodes: List[Node],
-        edges: List[Edge],
-        cost: float,
-        success: bool,
-    ):
-        self.nodes = nodes
-        self.edges = edges
-        self.cost = cost
-        self.success = success
-
-    @staticmethod
-    def failure() -> 'PathResult':
-        return PathResult([], [], 0.0, False)
-
-
-class MazeRouter:
-    """
-    迷宫布线核心引擎。
-
-    使用方向感知多源Dijkstra算法（可选A*启发式）从一组源节点寻找到达
-    一组目标节点的最短路径，同时遵守间距约束、cable_locs限制和折角代价。
-
-    Dijkstra状态为 (node, incoming_dir)，在同层方向改变时施加折角代价；
-    跨层 via 后方向重置为 _DIR_NONE，不产生折角惩罚。
+    根据 strategy.get_router_type() 选择 SteinerRouter（DP）或 MazeRouter（贪心），
+    路由完成后执行 pin 引出。
     """
 
     def __init__(
         self,
-        grid: RoutingGrid,
-        spacing_mgr: SpacingManager,
-        cost_multiplier: Optional[Callable[[Node, str], float]] = None,
-        congestion_map: Optional[Dict[Node, float]] = None,
-        corner_mgr: Optional[CornerManager] = None,
-        corner_costs: Optional[Dict[str, float]] = None,
+        grid: GridGraph,
+        constraint_mgr: ConstraintManager,
+        cost_mgr: CostManager,
+        strategy: RipupStrategy,
     ):
-        """
-        参数:
-            grid: 布线网格
-            spacing_mgr: 间距约束管理器
-            cost_multiplier: 可选的代价乘数函数 (node, net_name) -> float
-            congestion_map: 可选的拥塞代价映射 node -> extra_cost
-            corner_mgr: 折角代价管理器（CornerManager），优先于 corner_costs；
-                        None 时按 corner_costs 参数构建默认管理器。
-            corner_costs: 向后兼容参数，{layer: float} 字典；仅在 corner_mgr=None 时生效：
-                          None → 使用默认值 DEFAULT_CORNER_COST=5.0；
-                          {}   → 不施加折角代价；{...} → 按层指定代价。
-        """
         self.grid = grid
-        self.spacing_mgr = spacing_mgr
-        self.cost_multiplier = cost_multiplier
-        self.congestion_map = congestion_map or {}
-        self.corner_mgr = _resolve_corner_mgr(corner_mgr, corner_costs)
+        self.constraint_mgr = constraint_mgr
+        self.cost_mgr = cost_mgr
+        self.strategy = strategy
+        self._steiner = SteinerRouter(grid, constraint_mgr, cost_mgr)
+        self._maze = MazeRouter(grid, constraint_mgr, cost_mgr)
 
-    def route(
-        self,
-        sources: Set[Node],
-        targets: Set[Node],
-        net_name: str,
-        cable_locs: Optional[Set[Node]] = None,
-        use_astar: bool = True,
-    ) -> PathResult:
+    def route_net(self, net: Net, iteration: int = 1) -> RoutingResult:
         """
-        从源节点集合寻找到目标节点集合的最短路径（含折角代价）。
-
-        Dijkstra 状态：(node, incoming_dir)
-          - 所有源节点初始方向为 _DIR_NONE（无来向，第一步不触发折角）
-          - 跨层 via 后方向重置为 _DIR_NONE
-          - 同层移动方向改变时，在进入新节点前叠加 corner_costs[layer]
+        布线单个线网，含路由器派发和 pin 引出。
 
         参数:
-            sources: 源节点集合（如已构建的部分Steiner树上所有节点）
-            targets: 目标节点集合（如下一个要连接的terminal）
-            net_name: 当前线网名称
-            cable_locs: 该线网在M0层可用的节点集合（None表示无限制）
-            use_astar: 是否使用A*启发式加速
+            net:       线网对象
+            iteration: 当前迭代轮次
         返回:
-            PathResult 包含路径节点、边和代价
+            RoutingResult
         """
-        if not sources or not targets:
-            return PathResult.failure()
+        router_type = self.strategy.get_router_type(net, iteration)
 
-        # 源和目标有交集则直接返回
-        overlap = sources & targets
-        if overlap:
-            node = next(iter(overlap))
-            return PathResult([node], [], 0.0, True)
+        if router_type == RouterType.STEINER_DP:
+            result = self._steiner.route(net, iteration=iteration)
+            # DP 失败时回退到贪心
+            if not result.success:
+                logger.info(f"线网 {net.name}: DP 失败，回退到贪心")
+                terminal_order = self.strategy.order_terminals(net, set())
+                result = build_steiner_greedy(
+                    net, terminal_order,
+                    self.grid, self.constraint_mgr, self.cost_mgr,
+                    iteration=iteration,
+                )
+        else:
+            terminal_order = self.strategy.order_terminals(net, set())
+            result = build_steiner_greedy(
+                net, terminal_order,
+                self.grid, self.constraint_mgr, self.cost_mgr,
+                iteration=iteration,
+            )
 
-        target_coords = [(t[1], t[2]) for t in targets]
+        # Pin 引出
+        if result.success and net.pin_spec is not None:
+            self._extract_pin(net, result)
 
-        def heuristic(node: Node) -> float:
-            if not use_astar:
-                return 0.0
-            x, y = node[1], node[2]
-            return min(abs(x - tx) + abs(y - ty) for tx, ty in target_coords)
+        # 后处理 hook（如 MinAreaConstraint 节点扩展）
+        if result.success:
+            self.constraint_mgr.post_process_results(net.name, result, self.grid)
 
-        # 优先队列: (estimated_cost, counter, actual_cost, node, dir_code)
-        # dist / prev 以 (node, dir_code) 为键
-        counter = 0
-        pq = []
-        dist: Dict[Tuple[Node, int], float] = {}
-        prev: Dict[Tuple[Node, int], Tuple[Node, int]] = {}
+        return result
 
-        for s in sources:
-            if not self.grid.is_valid_node(s):
-                continue
-            state = (s, _DIR_NONE)
-            if state not in dist:
-                dist[state] = 0.0
-                h = heuristic(s)
-                heapq.heappush(pq, (h, counter, 0.0, s, _DIR_NONE))
-                counter += 1
+    def find_blocked_nets(self, net: Net) -> Set[str]:
+        """分析阻塞线网（使用 SteinerRouter 的 BFS 分析）。"""
+        return self._steiner.find_blocked_nets(net)
 
-        found_state: Optional[Tuple[Node, int]] = None
+    # ------------------------------------------------------------------
+    # Pin 引出
+    # ------------------------------------------------------------------
 
-        while pq:
-            est_cost, _, actual_cost, current, dir_in = heapq.heappop(pq)
-            state = (current, dir_in)
-
-            if actual_cost > dist.get(state, float('inf')):
-                continue
-
-            if current in targets:
-                found_state = state
-                break
-
-            for neighbor in self.grid.get_neighbors(current):
-                # 间距约束（源集合内节点属于本线网，无需检查）
-                if neighbor not in sources:
-                    if not self.spacing_mgr.is_available(neighbor, net_name):
-                        continue
-
-                # M0 cable_locs 约束
-                if cable_locs is not None and neighbor[0] == "M0":
-                    if neighbor not in cable_locs and neighbor not in targets:
-                        continue
-
-                # 计算移动方向
-                dir_out = _move_dir_code(current, neighbor)
-
-                # 折角代价：同层 && 有来向 && 方向改变
-                cp = 0.0
-                if (dir_in != _DIR_NONE
-                        and dir_out != _DIR_NONE
-                        and dir_in != dir_out):
-                    cp = self.corner_mgr.get_l_cost(current[0], dir_in, dir_out)
-
-                # 边代价
-                edge_cost = self.grid.get_edge_cost(current, neighbor)
-                if self.cost_multiplier:
-                    edge_cost *= self.cost_multiplier(neighbor, net_name)
-                if neighbor in self.congestion_map:
-                    edge_cost += self.congestion_map[neighbor]
-
-                new_cost = actual_cost + edge_cost + cp
-                new_state = (neighbor, dir_out)
-
-                if new_cost < dist.get(new_state, float('inf')):
-                    dist[new_state] = new_cost
-                    prev[new_state] = state
-                    h = heuristic(neighbor)
-                    heapq.heappush(
-                        pq, (new_cost + h, counter, new_cost, neighbor, dir_out)
-                    )
-                    counter += 1
-
-        if found_state is None:
-            return PathResult.failure()
-
-        # 回溯路径（从 (node, dir) 状态链中提取节点序列）
-        path_nodes: List[Node] = []
-        path_edges: List[Edge] = []
-        cur_state = found_state
-        while cur_state in prev:
-            node = cur_state[0]
-            path_nodes.append(node)
-            par_state = prev[cur_state]
-            path_edges.append((par_state[0], node))
-            cur_state = par_state
-        path_nodes.append(cur_state[0])   # 起始源节点
-        path_nodes.reverse()
-        path_edges.reverse()
-
-        return PathResult(
-            nodes=path_nodes,
-            edges=path_edges,
-            cost=dist[found_state],
-            success=True,
-        )
-
-    def find_blocked_path_info(
-        self,
-        sources: Set[Node],
-        targets: Set[Node],
-        net_name: str,
-        cable_locs: Optional[Set[Node]] = None,
-    ) -> Set[str]:
+    def _extract_pin(self, net: Net, result: RoutingResult):
         """
-        当布线失败时，分析哪些线网阻塞了路径。
+        在布线结果中选取或生成 Pin 引出点。
 
-        使用 BFS 扩展，收集所有无法通过的节点上阻塞的线网名称。
-        （此方法仅用于阻塞分析，不涉及方向/折角，保持原逻辑。）
-
-        参数:
-            sources: 源节点集合
-            targets: 目标节点集合
-            net_name: 当前线网名称
-            cable_locs: M0层可用节点集合
-        返回:
-            阻塞线网名称集合
+        修改 result.pin_point（以及可能的 routed_nodes/routed_edges）。
         """
-        blocking_nets = set()
-        visited = set()
-        queue = list(sources)
+        pin_spec = net.pin_spec
+        terminals = set(net.terminals)
 
-        while queue:
-            current = queue.pop(0)
-            if current in visited:
-                continue
-            visited.add(current)
+        # 1. 检查 routed_nodes 中是否已有满足层要求的节点
+        candidates = [
+            n for n in result.routed_nodes
+            if pin_spec.allows_layer(n[0])
+        ]
+        if candidates:
+            # 选距离 terminal 最近的
+            result.pin_point = min(
+                candidates,
+                key=lambda n: min(
+                    abs(n[1] - t[1]) + abs(n[2] - t[2])
+                    for t in terminals
+                )
+            )
+            logger.debug(f"线网 {net.name}: pin 引出至 {result.pin_point}（已有节点）")
+            return
 
-            for neighbor in self.grid.get_neighbors(current):
-                if neighbor in visited:
+        # 2. 寻找可通过 via 到达目标层的节点
+        target_layers: List[str] = []
+        if pin_spec.layer == "Any":
+            target_layers = ["M1", "M2"]
+        else:
+            target_layers = [pin_spec.layer]
+
+        for node in result.routed_nodes:
+            for nb in self.grid.get_neighbors(node):
+                if nb[0] not in target_layers:
+                    continue
+                if not self.constraint_mgr.is_available(nb, net.name):
                     continue
 
-                if cable_locs is not None and neighbor[0] == "M0":
-                    if neighbor not in cable_locs and neighbor not in targets:
-                        continue
+                # 检查 nb 的邻居中有无可用节点（保证 pin 周围有空间）
+                via_neighbors = [
+                    n for n in self.grid.get_neighbors(nb)
+                    if n != node and self.constraint_mgr.is_available(n, net.name)
+                ]
+                if len(via_neighbors) < _PIN_MIN_NEIGHBORS:
+                    continue
 
-                if neighbor not in sources:
-                    if not self.spacing_mgr.is_available(neighbor, net_name):
-                        blocking_nets.update(
-                            self.spacing_mgr.get_blocking_nets(neighbor, net_name)
-                        )
-                        continue
+                # 找一个可用邻居作为 pin_point
+                pin_point = via_neighbors[0]
 
-                queue.append(neighbor)
+                result.routed_nodes.add(nb)
+                result.routed_nodes.add(pin_point)
+                result.routed_edges.append((node, nb))
+                result.routed_edges.append((nb, pin_point))
+                result.pin_point = pin_point
 
-        return blocking_nets
+                logger.debug(
+                    f"线网 {net.name}: pin 引出 via {nb} → {pin_point}"
+                )
+                return
+
+        logger.warning(f"线网 {net.name}: 无法找到 pin 引出点（层要求={pin_spec.layer}）")
