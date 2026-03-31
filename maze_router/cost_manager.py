@@ -106,8 +106,7 @@ class CostManager:
         # 软约束代价（BaseCost 插件）
         soft = 0.0
         for cost in self._costs:
-            if not isinstance(cost, CornerCost):
-                soft += cost.get_node_penalty(dst, ctx.net_name, ctx)
+            soft += cost.get_node_penalty(dst, ctx.net_name, ctx)
 
         return base + cong + soft
 

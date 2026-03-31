@@ -344,7 +344,8 @@
   <line x1="160" y1="240" x2="160" y2="240" stroke="#3cb44b" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="240" y1="320" x2="240" y2="320" stroke="#3cb44b" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="480" y1="320" x2="480" y2="320" stroke="#3cb44b" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
-  <line x1="560" y1="160" x2="560" y2="160" stroke="#3cb44b" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
+  <line x1="640" y1="160" x2="640" y2="160" stroke="#3cb44b" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
+  <line x1="560" y1="160" x2="640" y2="160" stroke="#3cb44b" stroke-width="2"  opacity="0.85"/>
   <line x1="560" y1="120" x2="560" y2="160" stroke="#3cb44b" stroke-width="2"  opacity="0.85"/>
   <line x1="560" y1="80" x2="560" y2="120" stroke="#3cb44b" stroke-width="2"  opacity="0.85"/>
   <line x1="280" y1="320" x2="280" y2="320" stroke="#469990" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
@@ -356,6 +357,16 @@
   <line x1="600" y1="80" x2="600" y2="80" stroke="#9A6324" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="680" y1="80" x2="680" y2="80" stroke="#9A6324" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="40" y1="40" x2="40" y2="40" stroke="#42d4f4" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
+  <line x1="80" y1="40" x2="80" y2="40" stroke="#42d4f4" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
+  <line x1="160" y1="40" x2="80" y2="40" stroke="#42d4f4" stroke-width="2"  opacity="0.85"/>
+  <line x1="240" y1="40" x2="160" y2="40" stroke="#42d4f4" stroke-width="2"  opacity="0.85"/>
+  <line x1="320" y1="40" x2="240" y2="40" stroke="#42d4f4" stroke-width="2"  opacity="0.85"/>
+  <line x1="400" y1="40" x2="320" y2="40" stroke="#42d4f4" stroke-width="2"  opacity="0.85"/>
+  <line x1="480" y1="40" x2="400" y2="40" stroke="#42d4f4" stroke-width="2"  opacity="0.85"/>
+  <line x1="560" y1="40" x2="480" y2="40" stroke="#42d4f4" stroke-width="2"  opacity="0.85"/>
+  <line x1="640" y1="40" x2="560" y2="40" stroke="#42d4f4" stroke-width="2"  opacity="0.85"/>
+  <line x1="720" y1="40" x2="640" y2="40" stroke="#42d4f4" stroke-width="2"  opacity="0.85"/>
+  <line x1="720" y1="40" x2="720" y2="40" stroke="#42d4f4" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="760" y1="40" x2="760" y2="40" stroke="#42d4f4" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="40" y1="360" x2="40" y2="360" stroke="#f032e6" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="80" y1="360" x2="80" y2="360" stroke="#f032e6" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
@@ -369,16 +380,20 @@
   <line x1="720" y1="360" x2="640" y2="360" stroke="#f032e6" stroke-width="2"  opacity="0.85"/>
   <line x1="720" y1="360" x2="720" y2="360" stroke="#f032e6" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="760" y1="360" x2="760" y2="360" stroke="#f032e6" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
-  <line x1="40" y1="320" x2="40" y2="320" stroke="#4363d8" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
-  <line x1="40" y1="80" x2="40" y2="80" stroke="#4363d8" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
-  <line x1="120" y1="320" x2="120" y2="320" stroke="#bfef45" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
-  <line x1="120" y1="80" x2="120" y2="80" stroke="#bfef45" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="200" y1="320" x2="200" y2="320" stroke="#fffac8" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="200" y1="80" x2="200" y2="80" stroke="#fffac8" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="440" y1="320" x2="440" y2="320" stroke="#dcbeff" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="440" y1="80" x2="440" y2="80" stroke="#dcbeff" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
+  <line x1="200" y1="40" x2="200" y2="80" stroke="#fabed4" stroke-width="2"  opacity="0.85"/>
+  <line x1="200" y1="40" x2="200" y2="40" stroke="#fabed4" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
+  <line x1="360" y1="40" x2="360" y2="40" stroke="#fabed4" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
+  <line x1="360" y1="80" x2="360" y2="40" stroke="#fabed4" stroke-width="2"  opacity="0.85"/>
   <line x1="520" y1="320" x2="520" y2="320" stroke="#800000" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="520" y1="80" x2="520" y2="80" stroke="#800000" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
+  <line x1="680" y1="360" x2="680" y2="360" stroke="#f58231" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
+  <line x1="680" y1="320" x2="680" y2="360" stroke="#f58231" stroke-width="2"  opacity="0.85"/>
+  <line x1="680" y1="40" x2="680" y2="40" stroke="#f58231" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
+  <line x1="680" y1="80" x2="680" y2="40" stroke="#f58231" stroke-width="2"  opacity="0.85"/>
   <line x1="760" y1="320" x2="760" y2="320" stroke="#911eb4" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <line x1="760" y1="80" x2="760" y2="80" stroke="#911eb4" stroke-width="1" stroke-dasharray="3,3" opacity="0.85"/>
   <circle cx="160" cy="320" r="7" fill="#e6194b" stroke="white" stroke-width="1.5"/>
@@ -421,14 +436,6 @@
   <text x="49" y="364" font-size="9" fill="#f032e6">net_VSS</text>
   <circle cx="760" cy="360" r="7" fill="#f032e6" stroke="white" stroke-width="1.5"/>
   <text x="769" y="364" font-size="9" fill="#f032e6">net_VSS</text>
-  <circle cx="40" cy="80" r="7" fill="#4363d8" stroke="white" stroke-width="1.5"/>
-  <text x="49" y="84" font-size="9" fill="#4363d8">net_D</text>
-  <circle cx="40" cy="320" r="7" fill="#4363d8" stroke="white" stroke-width="1.5"/>
-  <text x="49" y="324" font-size="9" fill="#4363d8">net_D</text>
-  <circle cx="120" cy="320" r="7" fill="#bfef45" stroke="white" stroke-width="1.5"/>
-  <text x="129" y="324" font-size="9" fill="#bfef45">net_di</text>
-  <circle cx="120" cy="80" r="7" fill="#bfef45" stroke="white" stroke-width="1.5"/>
-  <text x="129" y="84" font-size="9" fill="#bfef45">net_di</text>
   <circle cx="200" cy="320" r="7" fill="#fffac8" stroke="white" stroke-width="1.5"/>
   <text x="209" y="324" font-size="9" fill="#fffac8">net_tg1</text>
   <circle cx="200" cy="80" r="7" fill="#fffac8" stroke="white" stroke-width="1.5"/>
@@ -437,10 +444,18 @@
   <text x="449" y="324" font-size="9" fill="#dcbeff">net_mB</text>
   <circle cx="440" cy="80" r="7" fill="#dcbeff" stroke="white" stroke-width="1.5"/>
   <text x="449" y="84" font-size="9" fill="#dcbeff">net_mB</text>
+  <circle cx="200" cy="80" r="7" fill="#fabed4" stroke="white" stroke-width="1.5"/>
+  <text x="209" y="84" font-size="9" fill="#fabed4">net_fb</text>
+  <circle cx="360" cy="80" r="7" fill="#fabed4" stroke="white" stroke-width="1.5"/>
+  <text x="369" y="84" font-size="9" fill="#fabed4">net_fb</text>
   <circle cx="520" cy="320" r="7" fill="#800000" stroke="white" stroke-width="1.5"/>
   <text x="529" y="324" font-size="9" fill="#800000">net_tg2</text>
   <circle cx="520" cy="80" r="7" fill="#800000" stroke="white" stroke-width="1.5"/>
   <text x="529" y="84" font-size="9" fill="#800000">net_tg2</text>
+  <circle cx="680" cy="320" r="7" fill="#f58231" stroke="white" stroke-width="1.5"/>
+  <text x="689" y="324" font-size="9" fill="#f58231">net_Q</text>
+  <circle cx="680" cy="80" r="7" fill="#f58231" stroke="white" stroke-width="1.5"/>
+  <text x="689" y="84" font-size="9" fill="#f58231">net_Q</text>
   <circle cx="760" cy="320" r="7" fill="#911eb4" stroke="white" stroke-width="1.5"/>
   <text x="769" y="324" font-size="9" fill="#911eb4">net_QB</text>
   <circle cx="760" cy="80" r="7" fill="#911eb4" stroke="white" stroke-width="1.5"/>

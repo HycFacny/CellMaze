@@ -82,6 +82,7 @@ class MazeRouter:
       - 所有源节点初始方向为 DIR_NONE
       - 跨层 via 后方向重置为 DIR_NONE
       - 同层移动方向改变时，叠加 cost_mgr.get_corner_l_cost()
+      - 从已布线树的内部节点（≥2 条已有边）出发时，叠加 T 型折角代价
 
     约束检查:
       - constraint_mgr.is_available()
@@ -106,17 +107,21 @@ class MazeRouter:
         cable_locs: Optional[Set[Node]] = None,
         use_astar: bool = True,
         iteration: int = 1,
+        tree_node_dirs: Optional[Dict[Node, Set[int]]] = None,
     ) -> PathResult:
         """
         从源节点集合寻找到目标节点集合的最短路径。
 
         参数:
-            sources:    源节点集合（已布线树节点）
-            targets:    目标节点集合
-            net_name:   当前线网名
-            cable_locs: M0 层可用节点集合（None=不限制）
-            use_astar:  是否使用 A* 启发式
-            iteration:  当前迭代轮次（影响拥塞代价）
+            sources:        源节点集合（已布线树节点）
+            targets:        目标节点集合
+            net_name:       当前线网名
+            cable_locs:     M0 层可用节点集合（None=不限制）
+            use_astar:      是否使用 A* 启发式
+            iteration:      当前迭代轮次（影响拥塞代价）
+            tree_node_dirs: 已布线树各节点的方向集合 {node: {dir, ...}}；
+                            当搜索从树的内部节点（已有 ≥2 条边的节点）
+                            向外分支时，添加 T 型折角代价。
         """
         if not sources or not targets:
             return PathResult.failure()
@@ -185,6 +190,22 @@ class MazeRouter:
                 cp = 0.0
                 if dir_in != DIR_NONE and dir_out != DIR_NONE and dir_in != dir_out:
                     cp = self.cost_mgr.get_corner_l_cost(current[0], dir_in, dir_out)
+
+                # T 型折角代价：从已布线树的内部节点向外分支时触发。
+                # 条件：
+                #   1. current 是树节点（在 sources 中），neighbor 是新节点（不在 sources 中）
+                #   2. tree_node_dirs 提供了方向信息
+                #   3. dir_out 有效（不是 via，同层移动）
+                #   4. current 已有 ≥2 条方向不同的边（内部节点/线段中点）
+                if (
+                    tree_node_dirs is not None
+                    and current in sources
+                    and neighbor not in sources
+                    and dir_out != DIR_NONE
+                ):
+                    existing_dirs = tree_node_dirs.get(current, set())
+                    if len(existing_dirs) >= 2:
+                        cp += self.cost_mgr.get_corner_t_cost_flat(current[0])
 
                 edge_cost = self.cost_mgr.get_edge_cost(current, neighbor, ctx)
                 new_cost = actual_cost + edge_cost + cp
@@ -262,6 +283,26 @@ class MazeRouter:
 # 增量贪心 Steiner 树构建
 # -----------------------------------------------------------------------
 
+def _update_tree_node_dirs(
+    tree_node_dirs: Dict[Node, Set[int]],
+    edges: List[Tuple[Node, Node]],
+) -> None:
+    """
+    根据新增路径边更新每个节点的方向集合。
+
+    对每条边 (src, dst)，同时记录从 src 出发的方向和从 dst 出发的反方向，
+    从而反映节点在已布线树中已被占用的出边方向集合。
+    仅同层边（非 via）有意义的方向会被记录。
+    """
+    for src, dst in edges:
+        d_fwd = move_dir_code(src, dst)
+        d_rev = move_dir_code(dst, src)
+        if d_fwd != DIR_NONE:
+            tree_node_dirs.setdefault(src, set()).add(d_fwd)
+        if d_rev != DIR_NONE:
+            tree_node_dirs.setdefault(dst, set()).add(d_rev)
+
+
 def build_steiner_greedy(
     net: Net,
     terminal_order: List[Node],
@@ -272,6 +313,12 @@ def build_steiner_greedy(
 ) -> RoutingResult:
     """
     增量贪心法构建 Steiner 树：逐一将 terminal 连接到当前树。
+
+    T 型折角支持：
+      每步连接后，记录新路径边对应的方向信息（tree_node_dirs）。
+      下次搜索时，若分支点（源节点）已有 ≥2 条方向不同的已布线边，
+      则触发 T 型折角代价，引导路由器优先选择无折角的分支点
+      （端点/叶子节点代价更低）或绕道避免在拥挤处分叉。
 
     参数:
         net:            线网对象
@@ -295,8 +342,9 @@ def build_steiner_greedy(
 
     router = MazeRouter(grid, constraint_mgr, cost_mgr)
 
-    # 以第一个 terminal 为起点
+    # 以第一个 terminal 为起点；tree_node_dirs 记录每个树节点已使用的方向集合
     tree_nodes: Set[Node] = {terminals[0]}
+    tree_node_dirs: Dict[Node, Set[int]] = {}
     total_cost = 0.0
 
     for target in terminals[1:]:
@@ -306,6 +354,7 @@ def build_steiner_greedy(
             net_name=net.name,
             cable_locs=net.cable_locs,
             iteration=iteration,
+            tree_node_dirs=tree_node_dirs,
         )
         if not path.success:
             result.success = False
@@ -313,6 +362,7 @@ def build_steiner_greedy(
 
         tree_nodes.update(path.nodes)
         result.routed_edges.extend(path.edges)
+        _update_tree_node_dirs(tree_node_dirs, path.edges)
         total_cost += path.cost
 
     result.routed_nodes = tree_nodes
