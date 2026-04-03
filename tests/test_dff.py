@@ -580,12 +580,10 @@ class TestDFFFullRouting:
             grid=grid,
             nets=build_dff_nets(),
             space_constr={"M0": 0, "M1": 0, "M2": 0},
-            corner_cost=CornerCost(
-                l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}
-            ),
-            strategy=CongestionAwareRipupStrategy(max_iterations=100),
+            corner_l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0},
+            strategy="congestion_aware",
+            max_iterations=100,
         )
-        sol = engine.run()
         save_dir = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             "results", "stdcell_dff",
@@ -633,10 +631,9 @@ class TestDFFWithSpacing1:
             grid=grid,
             nets=build_dff_nets(),
             space_constr={"M0": 1, "M1": 1, "M2": 1},
-            corner_cost=CornerCost(
-                l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0}
-            ),
-            strategy=CongestionAwareRipupStrategy(max_iterations=80),
+            corner_l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0},
+            strategy="congestion_aware",
+            max_iterations=80,
         )
         engine.run()
         engine.visualize(save_dir=str(tmp_path), prefix="dff_space1_")
@@ -727,7 +724,6 @@ class TestDFFMinArea:
                     cable_locs=set(SD_CABLE_LOCS)),
             ],
             space_constr={"M0": 0, "M1": 0, "M2": 0},
-            corner_cost=CornerCost.default(),
             min_area={"M0": 2, "M1": 2},
         )
         solution = engine.run()
@@ -800,10 +796,9 @@ class TestDFFEngine:
             grid=grid,
             nets=build_dff_nets(),
             space_constr={"M0": 0, "M1": 0, "M2": 0},
-            corner_cost=CornerCost(
-                l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0},
-            ),
-            strategy=CongestionAwareRipupStrategy(max_iterations=100),
+            corner_l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0},
+            strategy="congestion_aware",
+            max_iterations=100,
         )
         solution = engine.run()
         assert solution.routed_count >= 10, \
@@ -815,10 +810,9 @@ class TestDFFEngine:
             grid=grid,
             nets=build_dff_nets(),
             space_constr={"M0": 1, "M1": 1, "M2": 1},
-            corner_cost=CornerCost(
-                l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0},
-            ),
-            strategy=CongestionAwareRipupStrategy(max_iterations=80),
+            corner_l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0},
+            strategy="congestion_aware",
+            max_iterations=80,
         )
         solution = engine.run()
         assert solution.routed_count >= 6, \
@@ -830,8 +824,8 @@ class TestDFFEngine:
             grid=grid,
             nets=build_dff_nets(),
             space_constr={"M0": 0, "M1": 0, "M2": 0},
-            corner_cost=CornerCost.default(),
-            strategy=CongestionAwareRipupStrategy(max_iterations=50),
+            strategy="congestion_aware",
+            max_iterations=50,
         )
         engine.run()
         engine.visualize(save_dir=str(tmp_path), prefix="dff_engine_")

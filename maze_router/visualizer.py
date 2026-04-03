@@ -102,7 +102,8 @@ class Visualizer:
 
         if layers is None:
             all_layers = set(n[0] for n in self.grid.get_all_nodes())
-            layers = sorted(all_layers)
+            # 过滤掉虚拟层（虚拟节点不在物理布线图中渲染）
+            layers = sorted(l for l in all_layers if not self.grid.is_virtual_node((l, 0, 0)))
 
         for layer in layers:
             filename = f"{prefix}layer_{layer.lower()}.svg"

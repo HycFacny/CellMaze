@@ -1,0 +1,77 @@
+任务背景：
+在EDA领域的标准单元布线设计中，我们按照PMOS、NMOS的各个Source Drain Gate将版图简化为三层的网格，分别为M0，M1，M2，其中每层的每个节点初始状态下会和上下左右四个节点相连，另外部分节点可能会和上层节点相连，通过初始化，我们得到了一个描述当前版图简化后的三层网格的连接性描述 G，为nx.Graph。
+
+G的node为一个三元组(layer, x, y)，其中layer为M0或M1或M2，x为横坐标，y为纵坐标。edge为(node1, node2, cost)，其中cost为我们初始化G的时候给定的一个权重，但是具体的是否可以走当前edge还需要更多的考虑。
+
+任务规定：
+线网的terminal都分布在标准单元的上边界和下边界，每个晶体管terminal按照source gate drain 排列，然后相邻的晶体管必定是前一个的drain 等于后一个的 source，这样假设一排有n个晶体管，那么M0的网格就会有2*n-1列。
+source和drain只能竖着布线，不能横向布线。并且，上半区的source/drain和下半区的source/drain在M0是不可以通过中间联通的（因为有Active区域的存在，规定了source/drain在M0的竖向布线区域），而gate的话也只能在Active区域外能有横向走线。如果上下两排有相同的gate，那么他们是可以直接通过M0进行连通的，特别是上下对应的晶体管的gate相同，我们叫它共栅，是可以直接相连的；但是若距离比较远，那更好的选择是通过M1或者M2的走线，从上层进行连接，M0尽量保持精简。
+更多的信息请查阅互联网有关“标准单元网格布线”的相关知识来补充完毕。
+
+任务假设（for test）：
+我们假设每层有9行，上层与下层的网格一一对齐，但M2层只有第二行和第四行能够布线（也只能横向布线），请依据上述规定构造一个生成一个较大的实际的标准单元版图所生成的testcase，设置M0 M1 M2的space为1，并根据上述背景进行运行测试，要求结果尽量准确
+
+
+
+任务设置：
+架构：
+1. MazeRouterEngine：顶层class，负责整个Router的调度
+2. RipupManager：负责拆线重布整个调度的class，由MazeRouterEngine来进行调度，要精细考虑不同线网之间出现冲突时候的拆线重布方案，包括拆子区域或者拆整个线网等各种方案；也要考虑各个线网的布线顺序（RipupStrategy）
+3. RipupStrategy：负责拆线重布方案的参数或者流程方法之类的设置，方便后续添加策略（这个是可选的，若没有意义则也可以不设计，但最好有一种通用的设计方法），是决定各个线网布线顺序的核心
+4. Router：由RipupManager调度，是进行两种布线算法的调度算法，其余的功能可以按需添加；
+5. SteinerRouter：采用dp算法求最优斯坦纳树，在terminal数量少于10的情况下使用，也一定要考虑space、corner和congestion三种因素，要适配区域拆线重布；由Router调度；要适配区域拆线重布和单Net拆线重布；要适配Pin引出，而且引出点要保证周围能有一定的小空间（比如3x3之类的，这个可有个内部参数来设置）
+6. MazeRouter：采用Dijkstra类型的增量式A-star算法，一定要保证在尽量最优的情况下进行增量式的斯坦纳树生成，一定要考虑space、corner和congestion三种因素，要适配区域拆线重布；要适配Pin引出，而且引出点要保证周围能有一定的小空间（比如3x3之类的，这个可有个内部参数来设置）
+7. CostManager：负责将各类Cost对象进行集成和计算，将计算结果融入上述两个布线算法中，要支持很方便的新cost插入；
+8. 各种cost的类，写个基类再扩展子类，目前主要是两种子类（所有的cost类放在一个子文件夹内），要支持很方便的新cost扩展：
+    · space：List[Tuple[layer1, layer2], type: (T2S or T2T or S2S), cost]，space也有cost的设计，作为一种“软约束”，type包括三种：side-to-side,tip-to-side,tip-to-tip
+    · corner：望布出来的线的折角尽可能的少，让线变得简单一些，Corner分为L型和T型，并且需要考虑方向，不同方向的cost可能不同。这个cost的命名和数据结构由你来设计
+9. ConstraintManager：负责将各类约束进行计算，主要是用来判断这步（或者连续多步）是否能走，要支持很方便的新cost插入
+10.各种Constraint，写个基类再扩展子类，目前主要是两种子类（所有的constraint类放在一个子文件夹内），要支持很方便的新cost扩展：
+    · space：Tuple[layer1, layer2, int]，这里与上述的cost的space不同，这里不考虑type，因为这会很难实现，所以只考虑最基础的
+11. 各种基础数据类，放在单独一个文件夹，例如：Net，GridGraph，Region等等，以这些class的对象作为主要内容给上面的各类class作为一部分输入
+12. 其它类，按照设计需求可以自由添加
+
+
+
+任务外部给定的输入：
+1. G: nx.Graph，描述当前三层金属层的网格布线的结构。注意：有一些点会是不存在的，以及下层和上层（如M0和M1的via边）的通孔的y是可能不同的，所以G需要根据版图的前处理来得到；另外，G的edge是会有cost的，默认是1，via（即跨层的边）也是会有cost的，每个via的cost并不一定相同，会在G中定义好。
+2. net_start_locs: List[node]，都是虚拟起点，每个虚拟起点都会连向M0中若干有真正合法可能性的起点。每个net有多个起点（terminal），需要通过算法将他们连接起来，使得每个net的两两起点之间都能够有通路到达，并且在满足不同net线之间space约束的情况下总体线长最短
+3. net_cable_locs = Dict[net, List[node]]：表述对于每个Net，在M0上可以走的点的集合（默认M1、M2都可以走），这是通过分析Source Drain Gate后得出的一组参数输入；
+4. net_pin_layer = Dict[net, layer]，对于部分net，有规定要在哪一层来引出，layer可以是M0，M1，M2或者Any。如果net不在net_pin_layer说明不需要引出，如果layer是Any，则可以随便选择M1还是M2引出（不能是M0）
+5. net_active_must_occupy_num = Dict[Tuple[net, j, i], int]：当前net在第i行第j列（这个是从布局角度的，比如第0行则是nmos，第1行则是pmos，第2行则是多行布局中的pmos，第三行则是多行布局中的nmos，以此类推，可以先预留好多行的可能性）所需要占用的active大小（格点数量）。对于这个值，在算法中必须在 M1 层的S/D对应列、对应行范围内覆盖这个数值数量的点，表示覆盖了active。
+这个参数是用在部分工艺具有要求M1走闲需要覆盖active的规则，如ymtc的工艺。
+举例：net0，NMOS区域一共有4行网格（即0～3行），单行布局，在第2列有一个active为2的net0 的 S/D Terminal，即：net_active_must_occupy_num[(net0, 2, 0)] = 3    （即2 + 1）
+我们现在考虑入口的G，当前这个net0在第2列的起点是外部虚拟点net0_2_0，连接到("M0", 2, 0), ("M0", 2, 1)，代表在版图中的实际起点可以是这两个点（因为考虑到4行但active为3），然后这两个点必须直接连到M1的对应点上，然后在M1上必须先垂直走两条边（即覆盖active），然后才能考虑往其他方向走。
+6. space_constr：List[layer1, layer2, int]，表示在每层里所有Net的布线之间最小的网格间隔，为整数，至少为1
+7. corner_cost：我们希望布出来的线的折角尽可能的少，让线变得简单一些，Corner分为L型和T型，并且需要考虑方向，不同方向的cost可能不同。这个cost的命名和数据结构由你来设计
+8. space_cost: List[layer1, layer2, type, cost]
+
+
+任务偏好：
+1. 每次布线的时候尽量将同一个net的所有起点一起布出来（即一次布出整个net的斯坦纳树），来避免起点两两匹配会出现的问题
+2. 要精细考虑到不同线网之间出现冲突时候的拆线重布方案，包括拆子区域或者拆整个线网等各种方案
+3. 对于选择线网布线顺序，以及偏好什么的，封装成一个strategy的class来管理，尽量和布线流程能解耦开
+4. 要求尽量模块化，尽量用class封装
+5. 设计一些复杂的testcase，比如同时有8个net，其中若干net的terminal数量
+6. 写一个详细的算法设计文档，以及一个总体结构、使用方法的文档，并且用连接图来刻画整个项目的调用flow
+7. 实现可视化功能，将布线后的结果按照layer_m0.svy, layer_m1.svg, layer_m2.svg的图片保存布线结果（要标注清楚Pin引出点），可以设置保存路径，默认则在项目根目录下的results目录中
+
+
+上述任务的net_active_must_occupy_num有个表述错误，以下用新的表述来更新：
+net_active_must_occupy_num = Dict[Tuple[net, j, i], int]：当前net在第i行第j列（这个是从布局角度的，比如第0行则是nmos，第1行则是pmos，第2行则是多行布局中的pmos，第三行则是多行布局中的nmos，以此类推，可以先预留好多行的可能性）所需要占用的active大小（格点数量）。对于这个值，在算法中必须在 M1 层的S/D对应列、对应行范围内覆盖这个数值数量的点，表示覆盖了active。
+
+这个参数是用在部分工艺具有要求M1走闲需要覆盖active的规则，如ymtc的工艺。
+
+
+
+举例：net0，NMOS区域一共有4行网格（即0～3行），单行布局，在第2列有一个active为2的net0 的 S/D Terminal，即：net_active_must_occupy_num[(net0, 2, 0)] = 3    （即2 + 1）
+我们现在考虑入口的G，当前这个net0在第2列的起点是外部虚拟点net0_2_0，连接到("M0", 2, 0), ("M0", 2, 1)，代表在版图中的实际起点可以是这两个点（因为考虑到4行但active为3），然后这两个点必须直接连到M1的对应点上，然后在M1上必须先垂直走两条边（即覆盖active），然后才能考虑往其他方向走。
+
+
+
+另外，现在生成的test-case需要修改S/D的起点规定，即S/D的信号在Active中只能有通孔，不能有垂直边，然后建模中的起点是对应的虚拟点net_j_i，连向当前第i行（0位nmos1为pmos2为pmos3为nmos以此类推）第j列的在M0上可行的起点位置。
+
+根据上述的规定，重构一下net_active_must_occupy_num和起点设定。
+
+
+之前我们新增了ActiveOccupancyConstraint的机制，我们采用的是post_process来完成这个工作，但实际表现上来说很差，我们需要在布线的过程中就解决，请你给出一个在线的方案，然后修改布线算法（两个算法都需要适配）和流程来适配在线的方案，并且测试上述的ymtc_cj3的case。如果无法设计出适合的方案，请给出理由。

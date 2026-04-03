@@ -19,10 +19,18 @@ class GridGraph:
 
     内部以 nx.Graph 存储节点和边（edge 属性 'cost' 默认=1）。
     提供路由器所需的查询接口：邻居、边代价、节点有效性。
+
+    虚拟节点（virtual nodes）：
+        某些工艺中，active 区域的起点范围可变，外部通过添加虚拟层节点
+        并连边到实际 M0 节点来描述这种可变性。虚拟节点不参与间距约束，
+        也不计入 active 占用计数。
+        使用 register_virtual_layer() 注册虚拟层，用 is_virtual_node() 查询。
     """
 
     def __init__(self, graph: Optional[nx.Graph] = None):
         self.graph: nx.Graph = graph if graph is not None else nx.Graph()
+        # 虚拟层集合：这些层的节点不参与间距约束和 active 占用计数
+        self.virtual_node_layers: Set[str] = set()
 
     # ------------------------------------------------------------------
     # 基础查询
@@ -53,12 +61,46 @@ class GridGraph:
     def add_edge(self, src: Node, dst: Node, cost: float = 1.0):
         self.graph.add_edge(src, dst, cost=cost)
 
+    # ------------------------------------------------------------------
+    # 虚拟节点管理
+    # ------------------------------------------------------------------
+
+    def register_virtual_layer(self, layer: str):
+        """
+        将某层注册为虚拟层（非物理层）。
+
+        虚拟层节点用于描述 active 起点范围可变的工艺：
+        外部建立虚拟节点并连边到实际 M0 节点，路由器透明穿越，
+        但虚拟节点不参与间距约束计算，也不计入 active 占用计数。
+        """
+        self.virtual_node_layers.add(layer)
+
+    def is_virtual_node(self, node: Node) -> bool:
+        """若节点属于已注册的虚拟层，返回 True。"""
+        return node[0] in self.virtual_node_layers
+
     def remove_node(self, node: Node):
         self.graph.remove_node(node)
 
     def remove_edge(self, src: Node, dst: Node):
         if self.graph.has_edge(src, dst):
             self.graph.remove_edge(src, dst)
+
+    def remove_vertical_edges_at(self, nodes):
+        """
+        移除给定节点上/下方向的同层竖向边。
+
+        用于在 active 行的 SD 列节点上禁止竖向 M0 走线（仅允许 via 到 M1）。
+        对每个节点 (layer, x, y)，移除与 (layer, x, y-1) 和 (layer, x, y+1) 的边。
+
+        参数:
+            nodes: Iterable[Node]
+        """
+        for node in nodes:
+            layer, x, y = node
+            for dy in (-1, 1):
+                neighbor = (layer, x, y + dy)
+                self.remove_edge(node, neighbor)
 
     # ------------------------------------------------------------------
     # 工厂方法

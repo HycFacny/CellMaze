@@ -85,12 +85,49 @@ ACTIVE_ROWS     = {1, 7}
 NON_ACTIVE_ROWS = {0, 2, 3, 4, 5, 6, 8}
 M2_ROWS = {3, 5}
 
-GATE_CABLE_LOCS: frozenset = frozenset(
-    ("M0", x, y) for x in GATE_COLS for y in range(ROWS)
-)
-SD_CABLE_LOCS: frozenset = frozenset(
-    ("M0", x, y) for x in SD_COLS for y in range(ROWS)
-)
+# 行类型 y 范围（单行标准单元 ROWS=9）
+NMOS_ROW = 0   # i=0
+PMOS_ROW = 1   # i=1
+ROW_TYPE_Y_RANGES = {
+    NMOS_ROW: (0, 3),   # y=0..3
+    PMOS_ROW: (5, 8),   # y=5..8
+}
+# 每个 SD Terminal 的 active 覆盖节点数要求
+SD_ACTIVE_N = 2   # N = active_size + 1，活跃行默认覆盖 2 个 M1 节点
+
+# 虚拟起点层名（已注册为 virtual_node_layers）
+EXT_LAYER = "EXT"
+
+# M0 cable locs 集合（用于 cable_locs 约束）
+GATE_CABLE_LOCS = frozenset(("M0", x, y) for x in GATE_COLS for y in range(ROWS))
+SD_CABLE_LOCS   = frozenset(("M0", x, y) for x in SD_COLS   for y in range(ROWS))
+
+
+def _sd_virtual_node(j: int, i: int) -> Node:
+    """返回列 j、行类型 i 对应的 EXT 虚拟起点。"""
+    return (EXT_LAYER, j, i)
+
+
+def _add_sd_virtual_to_grid(
+    grid: GridGraph,
+    j: int,
+    i: int,
+    N: int = SD_ACTIVE_N,
+) -> Node:
+    """
+    向网格添加 SD 虚拟起点并连边到 M0 可行起始位置，返回虚拟节点。
+
+    可行 M0 起始位置：在行类型 i 的 y_range 内，令 [y_start, y_start+N-1] ⊆ y_range
+    的所有 y_start 对应的 ("M0", j, y_start)。
+    """
+    y_min, y_max = ROW_TYPE_Y_RANGES[i]
+    vnode = _sd_virtual_node(j, i)
+    grid.add_node(vnode)
+    for y_start in range(y_min, y_max - N + 2):
+        m0_node = ("M0", j, y_start)
+        if grid.is_valid_node(m0_node):
+            grid.add_edge(vnode, m0_node, cost=0.0)
+    return vnode
 
 
 # ======================================================================
@@ -101,11 +138,14 @@ def build_oai33_grid() -> GridGraph:
     """
     构建 OAI33 标准单元的三层布线网格（9行×13列）。
 
-    严格按照真实标准单元 M0 约束：
-    - S/D 列：仅 NMOS 区(y=0↔1) 和 PMOS 区(y=7↔8) 有竖向边
-    - Gate 列：全程竖向(y=0→8)，横向仅在非Active行(y≠1,7)
-    - S/D 列无任何横向边
-    - M2：仅 y=3, y=5 横向，y=3↔y=5 竖向直连
+    S/D 列 M0 规则（新模型）：
+    - Active 行（y=1 NMOS，y=7 PMOS）在 S/D 列上 **无** M0 竖向边，
+      仅允许通过 via 连接到 M1（符合工艺 active coverage 规则）。
+    - S/D 列在 active 行以外也无 M0 竖向边，整列通过 via 上 M1 后水平走线。
+    - 虚拟起点（EXT 层）由 build_oai33_nets() 在创建线网时注入。
+    Gate 列：全程竖向(y=0→8)，横向仅在非 Active 行(y≠1,7)。
+    S/D 列无任何横向边。
+    M2：仅 y=3, y=5 横向，y=3↔y=5 竖向直连。
     """
     g = GridGraph()
 
@@ -117,9 +157,8 @@ def build_oai33_grid() -> GridGraph:
     # M0 竖向边
     for x in range(COLS):
         if x in SD_COLS:
-            # S/D 列：仅 NMOS 区 y=0↔1 和 PMOS 区 y=7↔8
-            g.add_edge(("M0", x, 0), ("M0", x, 1), cost=1.0)
-            g.add_edge(("M0", x, 7), ("M0", x, 8), cost=1.0)
+            # S/D 列：无任何 M0 竖向边（active 行只能通过 via 连 M1）
+            pass
         else:
             # Gate 列：全程竖向 y=0→8
             for y in range(ROWS - 1):
@@ -164,6 +203,9 @@ def build_oai33_grid() -> GridGraph:
         for y in M2_ROWS:
             g.add_edge(("M1", x, y), ("M2", x, y), cost=2.0)
 
+    # 注册虚拟层（S/D 起点由 build_oai33_nets 注入）
+    g.register_virtual_layer(EXT_LAYER)
+
     return g
 
 
@@ -171,28 +213,63 @@ def build_oai33_grid() -> GridGraph:
 # 线网构建
 # ======================================================================
 
-def build_oai33_nets():
+# SD 线网各 Terminal 的 active 覆盖规格：{(net_name, j, i): N}
+OAI33_ACTIVE_RULES = {
+    ("net_Y",   6,  PMOS_ROW): SD_ACTIVE_N,
+    ("net_Y",   0,  NMOS_ROW): SD_ACTIVE_N,
+    ("net_Y",   4,  NMOS_ROW): SD_ACTIVE_N,
+    ("net_mid", 2,  NMOS_ROW): SD_ACTIVE_N,
+    ("net_mid", 6,  NMOS_ROW): SD_ACTIVE_N,
+    ("net_mid", 10, NMOS_ROW): SD_ACTIVE_N,
+}
+
+
+def build_oai33_nets(grid: GridGraph):
     """
     构建 OAI33 门的 10 个布线线网。
+
+    S/D 线网中位于 active 行（y=1 NMOS，y=7 PMOS）的 Terminal 改为虚拟起点，
+    虚拟节点及其到 M0 可行起始位置的边会就地注入 grid。
+
+    参数:
+        grid: 由 build_oai33_grid() 构建的网格（会被原地修改注入虚拟节点）
+
+    返回:
+        (nets, active_rules)
+        active_rules: Dict[(net_name, j, i) → N]，传给 ActiveOccupancyConstraint
     """
     gate_locs = set(GATE_CABLE_LOCS)
     sd_locs   = set(SD_CABLE_LOCS)
 
-    return [
-        # === Gate 线网 ===
-        Net("net_A", [("M0", 1, 7), ("M0", 1, 1)],  cable_locs=gate_locs),
-        Net("net_B", [("M0", 3, 7), ("M0", 3, 1)],  cable_locs=gate_locs),
-        Net("net_C", [("M0", 5, 7), ("M0", 5, 1)],  cable_locs=gate_locs),
-        Net("net_D", [("M0", 7, 7), ("M0", 11, 1)], cable_locs=gate_locs),   # 交叉
-        Net("net_E", [("M0", 9, 7), ("M0", 7, 1)],  cable_locs=gate_locs),   # 交叉
-        Net("net_F", [("M0", 11, 7), ("M0", 9, 1)], cable_locs=gate_locs),   # 交叉
+    # 注入 SD 虚拟起点
+    v_Y_pmos = _add_sd_virtual_to_grid(grid, j=6,  i=PMOS_ROW)
+    v_Y_n0   = _add_sd_virtual_to_grid(grid, j=0,  i=NMOS_ROW)
+    v_Y_n4   = _add_sd_virtual_to_grid(grid, j=4,  i=NMOS_ROW)
+    v_mid_2  = _add_sd_virtual_to_grid(grid, j=2,  i=NMOS_ROW)
+    v_mid_6  = _add_sd_virtual_to_grid(grid, j=6,  i=NMOS_ROW)
+    v_mid_10 = _add_sd_virtual_to_grid(grid, j=10, i=NMOS_ROW)
+
+    nets = [
+        # === Gate 线网（直接 M0 端口，gate 列不受 active 规则约束）===
+        Net("net_A", [("M0", 1,  7), ("M0", 1,  1)], cable_locs=gate_locs),
+        Net("net_B", [("M0", 3,  7), ("M0", 3,  1)], cable_locs=gate_locs),
+        Net("net_C", [("M0", 5,  7), ("M0", 5,  1)], cable_locs=gate_locs),
+        Net("net_D", [("M0", 7,  7), ("M0", 11, 1)], cable_locs=gate_locs),   # 交叉
+        Net("net_E", [("M0", 9,  7), ("M0", 7,  1)], cable_locs=gate_locs),   # 交叉
+        Net("net_F", [("M0", 11, 7), ("M0", 9,  1)], cable_locs=gate_locs),   # 交叉
 
         # === S/D 线网 ===
-        Net("net_Y",   [("M0", 6, 7), ("M0", 0, 1), ("M0", 4, 1)],    cable_locs=sd_locs),
-        Net("net_mid", [("M0", 2, 1), ("M0", 6, 1), ("M0", 10, 1)],   cable_locs=sd_locs),
-        Net("net_VDD", [("M0", 0, 8), ("M0", 12, 8)], cable_locs=sd_locs),
-        Net("net_VSS", [("M0", 8, 0), ("M0", 12, 0)], cable_locs=sd_locs),
+        # net_Y: PMOS drain(6,7)→虚拟, NMOS drains (0,1)+(4,1)→虚拟
+        Net("net_Y",   [v_Y_pmos, v_Y_n0, v_Y_n4],       cable_locs=sd_locs),
+        # net_mid: NMOS 内部节点 (2,1)+(6,1)+(10,1)→虚拟
+        Net("net_mid", [v_mid_2, v_mid_6, v_mid_10],       cable_locs=sd_locs),
+        # net_VDD: PMOS 电源轨（y=8 非 active 行，保持直接端口）
+        Net("net_VDD", [("M0", 0, 8), ("M0", 12, 8)],     cable_locs=sd_locs),
+        # net_VSS: NMOS 地轨（y=0 非 active 行，保持直接端口）
+        Net("net_VSS", [("M0", 8, 0), ("M0", 12, 0)],     cable_locs=sd_locs),
     ]
+
+    return nets, OAI33_ACTIVE_RULES
 
 
 def make_mgr(grid: GridGraph, space: int = 0, max_iter: int = 50):
@@ -231,24 +308,23 @@ class TestOAI33GridStructure:
         assert len(grid.get_nodes_on_layer("M2")) == COLS * len(M2_ROWS)
 
     def test_m0_sd_nmos_area(self, grid):
-        """S/D 列在 NMOS 区(y=0↔1)有竖向边"""
+        """S/D 列在 active 行(y=0↔1)无 M0 竖向边（仅允许 via 到 M1）"""
         for x in SD_COLS:
-            assert grid.graph.has_edge(("M0", x, 0), ("M0", x, 1)), \
-                f"S/D x={x}: M0 y=0↔1 边缺失"
+            assert not grid.graph.has_edge(("M0", x, 0), ("M0", x, 1)), \
+                f"S/D x={x}: M0 y=0↔1 边不应存在（active-only-via 规则）"
 
     def test_m0_sd_pmos_area(self, grid):
-        """S/D 列在 PMOS 区(y=7↔8)有竖向边"""
+        """S/D 列在 active 行(y=7↔8)无 M0 竖向边（仅允许 via 到 M1）"""
         for x in SD_COLS:
-            assert grid.graph.has_edge(("M0", x, 7), ("M0", x, 8)), \
-                f"S/D x={x}: M0 y=7↔8 边缺失"
+            assert not grid.graph.has_edge(("M0", x, 7), ("M0", x, 8)), \
+                f"S/D x={x}: M0 y=7↔8 边不应存在（active-only-via 规则）"
 
     def test_m0_sd_no_through_center(self, grid):
-        """S/D 列 M0 无法通过中心（y=1↔2 无边，y=6↔7 无边）"""
+        """S/D 列 M0 无任何竖向边（active 行 via-only，通道行由 M1 走线）"""
         for x in SD_COLS:
-            assert not grid.graph.has_edge(("M0", x, 1), ("M0", x, 2)), \
-                f"S/D x={x}: y=1↔2 边不应存在"
-            assert not grid.graph.has_edge(("M0", x, 6), ("M0", x, 7)), \
-                f"S/D x={x}: y=6↔7 边不应存在"
+            for y in range(ROWS - 1):
+                assert not grid.graph.has_edge(("M0", x, y), ("M0", x, y + 1)), \
+                    f"S/D x={x}: M0 y={y}↔{y+1} 边不应存在"
 
     def test_m0_gate_full_vertical(self, grid):
         """Gate 列 M0 全程竖向连通 (y=0→8)"""
@@ -469,7 +545,7 @@ class TestOAI33FullRouting:
         保存 SVG 到 results/stdcell_oai33/。
         """
         mgr = make_mgr(grid, space=0, max_iter=80)
-        nets = build_oai33_nets()
+        nets, _ = build_oai33_nets(grid)
         solution = mgr.run(nets)
 
         save_dir = os.path.join(
@@ -494,7 +570,7 @@ class TestOAI33FullRouting:
     def test_full_routing_cable_locs_respected(self, grid):
         """验证各线网在 M0 层仅使用其 cable_locs 内的节点"""
         mgr = make_mgr(grid, space=0, max_iter=80)
-        nets = build_oai33_nets()
+        nets, _ = build_oai33_nets(grid)
         solution = mgr.run(nets)
 
         gate_nets = {"net_A", "net_B", "net_C", "net_D", "net_E", "net_F"}
@@ -517,7 +593,7 @@ class TestOAI33FullRouting:
     def test_full_routing_m2_rows_respected(self, grid):
         """验证 M2 层布线节点仅在 y=3, y=5"""
         mgr = make_mgr(grid, space=0, max_iter=80)
-        nets = build_oai33_nets()
+        nets, _ = build_oai33_nets(grid)
         solution = mgr.run(nets)
 
         for net_name, result in solution.results.items():
@@ -531,7 +607,7 @@ class TestOAI33FullRouting:
     def test_full_routing_no_node_overlap(self, grid):
         """验证不同线网的布线路径节点不重叠"""
         mgr = make_mgr(grid, space=0, max_iter=80)
-        nets = build_oai33_nets()
+        nets, _ = build_oai33_nets(grid)
         solution = mgr.run(nets)
 
         occupied: dict = {}
@@ -548,7 +624,7 @@ class TestOAI33FullRouting:
     def test_full_routing_summary(self, grid, capsys):
         """完整布线并打印详细摘要"""
         mgr = make_mgr(grid, space=0, max_iter=80)
-        nets = build_oai33_nets()
+        nets, _ = build_oai33_nets(grid)
         solution = mgr.run(nets)
 
         print(f"\n{'='*60}")
@@ -634,7 +710,7 @@ class TestOAI33WithSpacing2:
         保存 SVG 到 results/stdcell_oai33_s2/。
         """
         mgr = self._make_mgr_s2(grid, max_iter=100)
-        nets = build_oai33_nets()
+        nets, _ = build_oai33_nets(grid)
         solution = mgr.run(nets)
 
         save_dir = os.path.join(
@@ -666,7 +742,7 @@ class TestOAI33WithSpacing2:
         Chebyshev 距离 > 2（不同线网）。
         """
         mgr = self._make_mgr_s2(grid, max_iter=100)
-        nets = build_oai33_nets()
+        nets, _ = build_oai33_nets(grid)
         solution = mgr.run(nets)
 
         all_terminals = set()
@@ -721,15 +797,14 @@ class TestOAI33Engine:
 
     def test_engine_space0_full(self, grid):
         """Engine 端到端：OAI33 全部线网，space=0，至少 8/10 布通"""
-        nets = build_oai33_nets()
+        nets, _ = build_oai33_nets(grid)
         engine = MazeRouterEngine(
             grid=grid,
             nets=nets,
             space_constr={"M0": 0, "M1": 0, "M2": 0},
-            corner_cost=CornerCost(
-                l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0},
-            ),
-            strategy=CongestionAwareRipupStrategy(max_iterations=80),
+            corner_l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0},
+            strategy="congestion_aware",
+            max_iterations=80,
         )
         solution = engine.run()
         assert solution.routed_count >= 8, \
@@ -737,15 +812,14 @@ class TestOAI33Engine:
 
     def test_engine_space1_at_least_4(self, grid):
         """Engine 端到端：OAI33，space=1，至少 4/10 布通（13×9 网格 + Chebyshev space=1 限制较强）"""
-        nets = build_oai33_nets()
+        nets, _ = build_oai33_nets(grid)
         engine = MazeRouterEngine(
             grid=grid,
             nets=nets,
             space_constr={"M0": 1, "M1": 1, "M2": 1},
-            corner_cost=CornerCost(
-                l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0},
-            ),
-            strategy=CongestionAwareRipupStrategy(max_iterations=80),
+            corner_l_costs={"M0": 5.0, "M1": 5.0, "M2": 5.0},
+            strategy="congestion_aware",
+            max_iterations=80,
         )
         solution = engine.run()
         assert solution.routed_count >= 4, \
@@ -753,12 +827,11 @@ class TestOAI33Engine:
 
     def test_engine_saves_svg(self, grid, tmp_path):
         """Engine 可视化：生成 3 层 SVG 文件"""
-        nets = build_oai33_nets()
+        nets, _ = build_oai33_nets(grid)
         engine = MazeRouterEngine(
             grid=grid,
             nets=nets,
             space_constr={"M0": 0, "M1": 0, "M2": 0},
-            corner_cost=CornerCost.default(),
         )
         engine.run()
         engine.visualize(save_dir=str(tmp_path), prefix="oai33_")

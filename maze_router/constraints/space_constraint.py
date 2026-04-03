@@ -46,8 +46,11 @@ class SpaceConstraint(BaseConstraint):
 
         规则：候选节点与所有其他线网的已标记节点的 Chebyshev 距离 ≥ min_space。
         同一线网的节点不受约束。
+        若节点所在层未在 rules 中配置（如虚拟层），始终返回 True。
         """
         layer, x, y = node
+        if layer not in self.rules:
+            return True
         min_space = self.rules.get(layer, 1)
         layer_grid = self._grid[layer]
 
@@ -65,9 +68,11 @@ class SpaceConstraint(BaseConstraint):
         return True
 
     def mark_route(self, net_name: str, nodes: Set[Node]):
-        """标记线网占用的节点。"""
+        """标记线网占用的节点。仅标记 rules 中配置的层（虚拟层节点不参与间距管理）。"""
         for node in nodes:
             layer, x, y = node
+            if layer not in self.rules:
+                continue
             self._grid[layer][(x, y)].add(net_name)
             self._net_nodes[net_name].add(node)
 
@@ -96,15 +101,19 @@ class SpaceConstraint(BaseConstraint):
             self._net_nodes[net_name].discard(node)
 
     def partial_mark_route(self, net_name: str, nodes: Set[Node]):
-        """标记线网中部分节点。"""
+        """标记线网中部分节点。仅标记 rules 中配置的层。"""
         for node in nodes:
             layer, x, y = node
+            if layer not in self.rules:
+                continue
             self._grid[layer][(x, y)].add(net_name)
             self._net_nodes[net_name].add(node)
 
     def get_blocking_nets(self, node: Node, net_name: str) -> Set[str]:
-        """返回在该节点附近阻塞给定线网的线网名称集合。"""
+        """返回在该节点附近阻塞给定线网的线网名称集合。虚拟层节点不产生阻塞。"""
         layer, x, y = node
+        if layer not in self.rules:
+            return set()
         min_space = self.rules.get(layer, 1)
         layer_grid = self._grid[layer]
         blockers: Set[str] = set()

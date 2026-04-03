@@ -56,6 +56,8 @@ class Net:
     cable_locs: Optional[Set[Node]] = None
     pin_spec: Optional[PinSpec] = None
     priority: int = 0
+    active_must_occupy_num: Optional[Dict[Tuple[int, int], int]] = None
+    """per-SD-terminal active 占用约束：{(j, i): N}，j=列，i=行类型，N=M1最少节点数。"""
 
     def terminal_set(self) -> Set[Node]:
         return set(self.terminals)

@@ -192,7 +192,7 @@ class TestMazeRouterEngine:
             grid=grid,
             nets=nets,
             space_constr={"M0": 1, "M1": 1},
-            corner_cost=CornerCost(l_costs={"M0": 5.0}),
+            corner_l_costs={"M0": 5.0},
         )
         solution = engine.run()
         assert solution.routed_count == 1

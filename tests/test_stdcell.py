@@ -109,7 +109,7 @@ class TestOAI33:
             grid=grid,
             nets=nets,
             space_constr={"M0": 1, "M1": 1, "M2": 1},
-            corner_cost=CornerCost(l_costs={"M0": 3.0, "M1": 3.0, "M2": 3.0}),
+            corner_l_costs={"M0": 3.0, "M1": 3.0, "M2": 3.0},
         )
         solution = engine.run()
         engine.visualize(save_dir=str(tmp_path), prefix="oai33_test_")
@@ -125,7 +125,6 @@ class TestOAI33:
             grid=grid,
             nets=nets,
             space_constr={"M0": 1, "M1": 1, "M2": 1},
-            corner_cost=CornerCost.default(),
         )
         solution = engine.run()
         save_dir = os.path.join(
@@ -161,7 +160,7 @@ class TestLargerStdCell:
             grid=grid,
             nets=nets,
             space_constr={"M0": 1, "M1": 1, "M2": 1},
-            corner_cost=CornerCost(l_costs={"M0": 5.0, "M1": 5.0, "M2": 0.0}),
+            corner_l_costs={"M0": 5.0, "M1": 5.0, "M2": 0.0},
             cable_locs=cable_locs_map,
         )
         solution = engine.run()

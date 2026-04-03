@@ -8,9 +8,6 @@ import logging
 import os
 
 from maze_router import MazeRouterEngine
-from maze_router.costs.corner_cost import CornerCost
-from maze_router.costs.space_cost import SpaceCost, SpaceType, SpaceCostRule
-from maze_router.ripup_strategy import CongestionAwareRipupStrategy
 from tests.conftest import make_oai33_testcase, make_stdcell_testcase
 
 logging.basicConfig(
@@ -29,11 +26,10 @@ def run_oai33():
         grid=grid,
         nets=nets,
         space_constr={"M0": 1, "M1": 1, "M2": 1},
-        corner_cost=CornerCost(
-            l_costs={"M0": 3.0, "M1": 3.0, "M2": 0.0},
-            t_costs={"M0": 1.0, "M1": 1.0},
-        ),
-        strategy=CongestionAwareRipupStrategy(max_iterations=12),
+        corner_l_costs={"M0": 3.0, "M1": 3.0, "M2": 0.0},
+        corner_t_costs={"M0": 1.0, "M1": 1.0},
+        strategy="congestion_aware",
+        max_iterations=12,
     )
 
     solution = engine.run()
@@ -69,15 +65,14 @@ def run_larger():
         grid=grid,
         nets=nets,
         space_constr={"M0": 1, "M1": 1, "M2": 1},
-        corner_cost=CornerCost(
-            l_costs={"M0": 5.0, "M1": 5.0, "M2": 0.0},
-            t_costs={"M0": 1.0},
-        ),
+        corner_l_costs={"M0": 5.0, "M1": 5.0, "M2": 0.0},
+        corner_t_costs={"M0": 1.0},
         space_cost_rules=[
-            SpaceCostRule("M0", SpaceType.S2S, 2, 0.5),
-            SpaceCostRule("M1", SpaceType.T2S, 2, 0.3),
+            ("M0", "S2S", 2, 0.5),
+            ("M1", "T2S", 2, 0.3),
         ],
-        strategy=CongestionAwareRipupStrategy(max_iterations=15),
+        strategy="congestion_aware",
+        max_iterations=15,
     )
 
     solution = engine.run()
