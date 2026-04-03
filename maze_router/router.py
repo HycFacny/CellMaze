@@ -62,32 +62,52 @@ class Router:
         返回:
             RoutingResult
         """
-        router_type = self.strategy.get_router_type(net, iteration)
+        # ── 在线终端注入：将约束要求的强制节点合并到终端列表 ──────────
+        extra = self.constraint_mgr.collect_required_terminals(net.name, self.grid)
+        if extra:
+            existing = set(net.terminals)
+            merged = list(net.terminals) + [t for t in extra if t not in existing]
+            routing_net = Net(
+                name=net.name,
+                terminals=merged,
+                cable_locs=net.cable_locs,
+                pin_spec=net.pin_spec,
+                priority=net.priority,
+                active_must_occupy_num=net.active_must_occupy_num,
+            )
+            logger.debug(
+                f"线网 {net.name}: 在线注入 {len(merged) - len(net.terminals)} "
+                f"个强制终端（共 {len(merged)} 个）"
+            )
+        else:
+            routing_net = net
+
+        router_type = self.strategy.get_router_type(routing_net, iteration)
 
         if router_type == RouterType.STEINER_DP:
-            result = self._steiner.route(net, iteration=iteration)
+            result = self._steiner.route(routing_net, iteration=iteration)
             # DP 失败时回退到贪心
             if not result.success:
                 logger.info(f"线网 {net.name}: DP 失败，回退到贪心")
-                terminal_order = self.strategy.order_terminals(net, set())
+                terminal_order = self.strategy.order_terminals(routing_net, set())
                 result = build_steiner_greedy(
-                    net, terminal_order,
+                    routing_net, terminal_order,
                     self.grid, self.constraint_mgr, self.cost_mgr,
                     iteration=iteration,
                 )
         else:
-            terminal_order = self.strategy.order_terminals(net, set())
+            terminal_order = self.strategy.order_terminals(routing_net, set())
             result = build_steiner_greedy(
-                net, terminal_order,
+                routing_net, terminal_order,
                 self.grid, self.constraint_mgr, self.cost_mgr,
                 iteration=iteration,
             )
 
-        # Pin 引出
+        # Pin 引出（使用原始 net 的 pin_spec，引出点记录在 result 上）
         if result.success and net.pin_spec is not None:
             self._extract_pin(net, result)
 
-        # 后处理 hook（如 MinAreaConstraint 节点扩展）
+        # 后处理 hook（保底校验 + MinAreaConstraint 等）
         if result.success:
             self.constraint_mgr.post_process_results(net.name, result, self.grid)
 

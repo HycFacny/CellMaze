@@ -56,4 +56,4 @@ YMTC工艺特定：
    
 6. VSS和VDD在M1层上只能纵向连接到power-rail上，不能横向连接到其它的VSS、VDD，因此我们可以将VSS、VDD在M1的Active区域到边界的纵向边cost设置为0
    
-根据上述的情况重新梳理test_and2.py，重写，并将你的理解形成一个understand.md存放在 techs/ymtc_cj3/ 中
+根据上述的情况重新梳理test_and2.py，重写，并将你的理解形成一个understand.md存放在 techs/ymtc_cj3/ 里

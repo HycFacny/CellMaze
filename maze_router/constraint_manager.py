@@ -80,5 +80,23 @@ class ConstraintManager:
         for c in self._constraints:
             c.post_process_result(net_name, result, grid)
 
+    def collect_required_terminals(self, net_name: str, grid) -> list:
+        """
+        收集所有约束为线网提供的强制终端节点（在线注入机制）。
+
+        Router 在路由派发前调用此方法，将返回节点合并到线网终端列表，
+        使路由算法自然建立物理连接以满足约束（如 active 覆盖）。
+
+        返回去重后的节点列表，保留首次出现顺序。
+        """
+        seen: set = set()
+        result: list = []
+        for c in self._constraints:
+            for node in c.required_terminals(net_name, grid):
+                if node not in seen:
+                    seen.add(node)
+                    result.append(node)
+        return result
+
     def __repr__(self) -> str:
         return f"ConstraintManager({len(self._constraints)} constraints)"

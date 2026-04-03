@@ -311,10 +311,11 @@ def build_and2_nets(grid: GridGraph):
             ("M0", 7, 1),      # INV gate 终端（gate 列 x=7）
         ]),
 
-        # ── net0：NMOS 串联内部节点（单 SD，添加 M1 锚点触发覆盖）───
+        # ── net0：NMOS 串联内部节点（单 SD，inline 机制自动注入 M1 覆盖终端）──
         Net("net0", [
             ext_n[2],          # NMOS net0 EXT (x=2 bottom, via y=16)
-            ("M1", 2, 11),     # M1 有源区顶端锚点（触发 M1 全覆盖 y=11..16）
+            # 注：M1(2,11..16) 强制终端由 ActiveOccupancyConstraint.required_terminals()
+            # 在线注入，无需手动锚点
         ], cable_locs=set(SD_CABLE_LOCS)),
 
         # ── 输出 ─────────────────────────────────────────────────────
@@ -525,7 +526,9 @@ class TestAND2NetRouting:
 
     def test_gate_a_via_in_channel(self, grid):
         """
-        共栅 A 的 M0↔M1 via 只在 y=6..10 发生（gate via 限制验证）。
+        共栅 A 的 M0→M1 via 只发生在 y=6..10（gate via 限制）。
+        路由结果中若有 M0 和 M1 节点在同一位置，该 y 必须在 GATE_VIA_ROWS。
+        pin extraction 可产生 via 区域外的 M1 节点（从 via 点延伸），不属于违规。
         """
         g_copy = build_and2_grid()
         mgr = make_mgr(g_copy, space=0, max_iter=20)
@@ -536,10 +539,17 @@ class TestAND2NetRouting:
         if not solution.results["net_A"].success:
             pytest.skip("net_A 布线失败，跳过 via 检查")
         nodes = solution.results["net_A"].routed_nodes
-        m1_nodes = [n for n in nodes if n[0] == "M1"]
-        for m1_node in m1_nodes:
-            assert m1_node[2] in GATE_VIA_ROWS, \
-                f"net_A M1 节点 {m1_node} 不在 gate via 区域 y=6..10"
+        m0_xs = {n[1] for n in nodes if n[0] == "M0"}
+        m1_xs = {n[1] for n in nodes if n[0] == "M1"}
+        # 对同列（x=1）同行（y）的 M0+M1 节点，该 y 必须在 GATE_VIA_ROWS
+        via_x = 1
+        if via_x in m0_xs and via_x in m1_xs:
+            m0_ys = {n[2] for n in nodes if n[0] == "M0" and n[1] == via_x}
+            m1_ys = {n[2] for n in nodes if n[0] == "M1" and n[1] == via_x}
+            via_ys = m0_ys & m1_ys  # same y → via transition point
+            for y in via_ys:
+                assert y in GATE_VIA_ROWS, \
+                    f"net_A M0→M1 via 发生在 y={y}，不在 GATE_VIA_ROWS(y=6..10)"
 
     def test_gate_b_routes_successfully(self, grid):
         """共栅 B (x=3) 可布通"""
@@ -630,9 +640,10 @@ class TestAND2FullRouting:
             f"AND2 至少 4/7 布通，实际 {solution.routed_count}/7"
 
     def test_sd_nets_use_m1(self, grid):
-        """S/D 线网（VDD,VSS,net2,net0,net_Y）布线应使用 M1"""
-        nets, _ = build_and2_nets(grid)
-        mgr = make_mgr(grid, space=0, max_iter=80)
+        """S/D 线网（VDD,VSS,net2,net0,net_Y）布线应使用 M1
+        （active 规则启用，确保 net0 等单终端 SD 网也通过在线注入使用 M1）"""
+        nets, active_rules = build_and2_nets(grid)
+        mgr = make_mgr(grid, space=0, max_iter=80, active_rules=active_rules)
         solution = mgr.run(nets)
 
         for name in {"VDD", "VSS", "net2", "net0", "net_Y"}:
@@ -643,19 +654,21 @@ class TestAND2FullRouting:
             assert len(m1_nodes) > 0, f"S/D 线网 {name} 应使用 M1"
 
     def test_gate_via_in_channel_full(self, grid):
-        """Gate 线网 (net_A, net_B) 在 M1 的节点 y 只在 y=6..10"""
+        """Gate 线网 (net_A, net_B) 的 M0→M1 via 过渡点 y 只在 y=6..10"""
         nets, _ = build_and2_nets(grid)
         mgr = make_mgr(grid, space=0, max_iter=80)
         solution = mgr.run(nets)
 
-        for name in ["net_A", "net_B"]:
+        for name, gate_x in [("net_A", 1), ("net_B", 3)]:
             result = solution.results[name]
             if not result.success:
                 continue
-            for node in result.routed_nodes:
-                if node[0] == "M1":
-                    assert node[2] in GATE_VIA_ROWS, \
-                        f"{name} M1 节点 {node} 不在 gate via 区域 y=6..10"
+            m0_ys = {n[2] for n in result.routed_nodes if n[0] == "M0" and n[1] == gate_x}
+            m1_ys = {n[2] for n in result.routed_nodes if n[0] == "M1" and n[1] == gate_x}
+            via_ys = m0_ys & m1_ys
+            for y in via_ys:
+                assert y in GATE_VIA_ROWS, \
+                    f"{name} M0→M1 via 发生在 y={y}，不在 GATE_VIA_ROWS(y=6..10)"
 
     def test_no_m2_at_power_rails(self, grid):
         """任何线网均不在 M2 使用 VDD/VSS rail 行（M2 仅 y=7,9）"""

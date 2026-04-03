@@ -3,7 +3,7 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Set
+from typing import List, Set
 from maze_router.data.net import Node
 
 
@@ -58,3 +58,19 @@ class BaseConstraint(ABC):
             grid:     GridGraph（只读，用于查找邻居节点）
         """
         pass
+
+    def required_terminals(self, net_name: str, grid) -> List[Node]:
+        """
+        返回路由*前*需注入为强制终端的节点列表（在线约束注入）。
+
+        Router 在派发路由前调用此方法，将返回节点合并到线网终端列表，
+        使路由算法自然建立物理连接以满足约束（如 active 覆盖）。
+        默认返回空列表，子类可覆盖。
+
+        参数:
+            net_name: 线网名称
+            grid:     GridGraph（只读）
+        返回:
+            需要作为强制终端的节点列表
+        """
+        return []
