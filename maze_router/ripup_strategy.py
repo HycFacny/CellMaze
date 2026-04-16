@@ -132,8 +132,8 @@ class DefaultRipupStrategy(RipupStrategy):
         self._max_iterations = max_iterations
 
     def order_nets(self, nets: List[Net]) -> List[Net]:
-        """按端口数降序，端口数相同则按 priority 升序（priority 小的先布）。"""
-        return sorted(nets, key=lambda n: (-len(n.terminals), n.priority))
+        """按 priority 升序优先（priority 小的先布），priority 相同则按端口数降序。"""
+        return sorted(nets, key=lambda n: (n.priority, -len(n.terminals)))
 
     def get_router_type(self, net: Net, iteration: int) -> RouterType:
         """端口数 ≤ DP_TERMINAL_LIMIT 时使用 DP，否则贪心。"""

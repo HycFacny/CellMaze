@@ -6,6 +6,7 @@ GridGraph: nx.Graph 封装，描述三层金属层布线网格。
 """
 
 from __future__ import annotations
+import logging
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import networkx as nx
@@ -51,7 +52,8 @@ class GridGraph:
         return list(self.graph.neighbors(node))
 
     def get_edge_cost(self, src: Node, dst: Node) -> float:
-        if not self.graph.has_edge(src, dst):
+        _src, _dst = self.nsort(src, dst)
+        if not self.graph.has_edge(_src, _dst):
             return float('inf')
         return self.graph[src][dst].get('cost', 1.0)
 
@@ -59,7 +61,20 @@ class GridGraph:
         self.graph.add_node(node)
 
     def add_edge(self, src: Node, dst: Node, cost: float = 1.0):
-        self.graph.add_edge(src, dst, cost=cost)
+        _src, _dst = self.nsort(src, dst)
+        logging.debug(f"src: {_src}, dst: {_dst}")
+        self.graph.add_edge(_src, _dst, cost=cost)
+
+    def nsort(self, u: Node, v: Node):
+        u_z, u_x, u_y = u
+        v_z, v_x, v_y = v
+        if u_z != v_z:
+            return (u, v) if u_z < v_z else (v, u)
+        if u_x != v_x:
+            return (u, v) if u_x < v_x else (v, u)
+        if u_y != v_y:
+            return (u, v) if u_y < v_y else (v, u)
+        return (u, v)
 
     # ------------------------------------------------------------------
     # 虚拟节点管理

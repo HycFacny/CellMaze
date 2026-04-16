@@ -310,8 +310,8 @@
   <line x1="240" y1="200" x2="240" y2="240" stroke="#469990" stroke-width="2"  opacity="0.85"/>
   <polygon points="200,32 208,40 200,48 192,40" fill="#fabed4" stroke="black" stroke-width="1"/>
   <text x="210" y="44" font-size="9" fill="black">PIN</text>
-  <polygon points="440,352 448,360 440,368 432,360" fill="#42d4f4" stroke="black" stroke-width="1"/>
-  <text x="450" y="364" font-size="9" fill="black">PIN</text>
+  <polygon points="40,352 48,360 40,368 32,360" fill="#42d4f4" stroke="black" stroke-width="1"/>
+  <text x="50" y="364" font-size="9" fill="black">PIN</text>
   <polygon points="240,232 248,240 240,248 232,240" fill="#469990" stroke="black" stroke-width="1"/>
   <text x="250" y="244" font-size="9" fill="black">PIN</text>
   <rect x="40" y="410" width="12" height="12" fill="#e6194b"/>

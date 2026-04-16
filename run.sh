@@ -1,0 +1,1 @@
+python -m pytest tests/test_mux2_x1_ml.py > test.log 2>&1

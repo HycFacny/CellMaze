@@ -19,6 +19,7 @@ from maze_router.cost_manager import CostManager
 from maze_router.constraints.space_constraint import SpaceConstraint
 from maze_router.constraints.min_area_constraint import MinAreaConstraint
 from maze_router.constraints.active_occupancy_constraint import ActiveOccupancyConstraint
+from maze_router.constraints.path_constraint import PathConstraint
 from maze_router.costs.corner_cost import CornerCost
 from maze_router.costs.space_cost import SpaceCost, SpaceCostRule, SpaceType
 from maze_router.ripup_strategy import (
@@ -124,6 +125,16 @@ class MazeRouterEngine:
         单行标准单元（9行）默认值：{0: (0, 3), 1: (5, 8)}。
         多行需手动指定更多行类型。
         当 net_active_must_occupy_num 为 None 时忽略此参数。
+
+    must_keep_edges : Dict[str, List[Tuple[Tuple, Tuple]]], optional
+        边级强制约束，格式 {net_name: [(node_a, node_b), ...]}。
+        路由结果中必须包含这些边；不满足时布线失败（hard rule）。
+        node = (layer, x, y)，边无方向（(a,b) 与 (b,a) 等价）。
+
+    must_forbid_edges : Dict[str, List[Tuple[Tuple, Tuple]]], optional
+        边级禁止约束，格式 {net_name: [(node_a, node_b), ...]}。
+        路由过程中禁止经过这些边，影响 MazeRouter 和 SteinerRouter。
+        node = (layer, x, y)，边无方向。
     """
 
     def __init__(
@@ -145,6 +156,9 @@ class MazeRouterEngine:
         # ── 线网绑定 ─────────────────────────────────────────
         cable_locs: Optional[Dict[str, Set[Node]]] = None,
         pin_layers: Optional[Dict[str, str]] = None,
+        # ── 边级路径约束 ──────────────────────────────────────
+        must_keep_edges: Optional[Dict[str, List[Tuple]]] = None,
+        must_forbid_edges: Optional[Dict[str, List[Tuple]]] = None,
         # ── 策略原始参数（内部构建 RipupStrategy）────────────
         strategy: str = "congestion_aware",
         max_iterations: int = 20,
@@ -193,6 +207,11 @@ class MazeRouterEngine:
             constraints.append(ActiveOccupancyConstraint(
                 rules=net_active_must_occupy_num,
                 row_type_y_ranges=_y_ranges,
+            ))
+        if must_keep_edges or must_forbid_edges:
+            constraints.append(PathConstraint(
+                must_keep_edges=must_keep_edges,
+                must_forbid_edges=must_forbid_edges,
             ))
         self.constraint_mgr = ConstraintManager(constraints)
 

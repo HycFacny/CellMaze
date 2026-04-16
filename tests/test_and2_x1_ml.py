@@ -10,7 +10,8 @@ AND2 = NAND2(A,B) + INV(net2) → Y
   T3 (x=6-7-8): PMOS S=VDD/D=Y     G=net2; NMOS S=VSS/D=Y   G=net2 [NMOS 高 4]
 
 工艺规则 (YMTC CJ3)：
-  1. S/D 列 (0,2,4,6,8) 在 M0 上无任何竖横连线
+  1. S/D 列 (0,2,4,6,8) 在有源区（PMOS y=1..5，NMOS y=11..16）M0 无任何竖横连线；
+     通道区（y=6..10）可参与 M0 横向连线（非 active，无扩散阻断）
   2. S/D M0↔M1 via 仅在有源区边界：PMOS→y=1，NMOS→y=16(高6)或y=14(高4)
   3. Gate M0↔M1 via 仅在非有源区 y=6..10
   4. x=5 (Dummy gate)：无任何 M0 边，无 via
@@ -19,6 +20,8 @@ AND2 = NAND2(A,B) + INV(net2) → Y
   7. VDD/VSS 在 M1 只能纵向连接到 power rail（M1 靠近轨道的竖向边代价=0）
   8. M2 仅 y=7 和 y=9 横向布线
   9. net_A, net_B, net_Y 需要在 M1 层引出 pin
+  10. 通道区（y=6..10）相邻列间（Dummy x=5 两侧除外）均有 M0 横向边，
+      代价略低于 M1 横向边（M0=0.9/列，M1=1.0/列），供 Gate net 在 M0 通道层走线
 
 网格规格：9 列(x=0..8) × 18 行(y=0..17) × 3 层(M0,M1,M2)
 
@@ -40,6 +43,7 @@ from maze_router.constraint_manager import ConstraintManager
 from maze_router.cost_manager import CostManager
 from maze_router.constraints.space_constraint import SpaceConstraint
 from maze_router.constraints.active_occupancy_constraint import ActiveOccupancyConstraint
+from maze_router.constraints.path_constraint import PathConstraint
 from maze_router.costs.corner_cost import CornerCost
 from maze_router.ripup_strategy import CongestionAwareRipupStrategy
 from maze_router.ripup_manager import RipupManager
@@ -96,6 +100,9 @@ SD_PMOS_VIA_Y = 1   # PMOS 有源区最顶端（靠近 VDD rail y=0）
 SD_NMOS_VIA_Y = {0: 16, 2: 16, 4: 16, 6: 14, 8: 14}
 
 EXT_LAYER = "EXT"
+
+# M0 通道横向边代价（略低于 M1 横向边 1.0，鼓励 gate net 在通道区优先走 M0）
+M0_H_UNIT_COST = 0.9   # 每列单位代价；实际边代价 = 列距 × 0.9
 
 # M0 cable_locs 集合（用于各线网的 M0 节点约束）
 GATE_CABLE_LOCS = frozenset(("M0", x, y) for x in GATE_COLS for y in range(1, 17))
@@ -163,9 +170,11 @@ def build_and2_grid() -> GridGraph:
 
     M0 规则：
       - y=0 和 y=17：无 M0 节点（power rail 行，M1 only）
-      - S/D 列（0,2,4,6,8）：无任何 M0 边（竖横均无）
-      - Gate 列（1,3,7）：全程竖向边（y=1..16），无横向边
-      - Dummy 列（5）：无 M0 边，无 via
+      - S/D 列（0,2,4,6,8）：
+          · 有源区（y=1..5, y=11..16）无任何 M0 边（竖横均无）
+          · 通道区（y=6..10）可参与横向 M0 连线（非 active 区，无扩散阻断）
+      - Gate 列（1,3,7）：全程竖向边（y=1..16）
+      - Dummy 列（5）：无竖向 M0 边，无 via；通道区（y=6..10）可参与横向连线
       - M0↔M1 via 位置限制：
           Gate 列：仅 y=6..10（非有源区）
           S/D 列：仅 y=1（PMOS 边界）和 y=SD_NMOS_VIA_Y[x]（NMOS 边界）
@@ -193,7 +202,14 @@ def build_and2_grid() -> GridGraph:
     for x in GATE_COLS:
         for y in range(1, 16):
             g.add_edge(("M0", x, y), ("M0", x, y + 1), cost=1.0)
-    # 注：S/D 列和 Dummy 列无任何 M0 边
+
+    # M0 横向边：仅在通道区（y=6..10），所有相邻列 x↔x+1 全连（含 Dummy x=5）
+    # 代价 = M0_H_UNIT_COST（0.9），略低于 M1 横向代价（1.0）
+    # 有源区（y=1..5 PMOS，y=11..16 NMOS）无任何 M0 横向边
+    for y in GATE_VIA_ROWS:
+        for x in range(COLS - 1):
+            g.add_edge(("M0", x, y), ("M0", x + 1, y), cost=M0_H_UNIT_COST)
+    # 注：S/D 列和 Dummy 列无竖向 M0 边；通道区横向边三类列均可参与
 
     # ── M1：完整矩形 y=0..17 ─────────────────────────────────────────
     for x in range(COLS):
@@ -380,14 +396,14 @@ class TestAND2GridStructure:
         assert len(grid.get_nodes_on_layer("M2")) == len(M2_ROWS) * COLS, \
             f"M2 应有 {len(M2_ROWS) * COLS} 个节点，实际 {len(grid.get_nodes_on_layer('M2'))}"
 
-    def test_m0_sd_no_edges(self, grid):
-        """S/D 列 M0 无任何 M0-M0 边（竖横均无）"""
+    def test_m0_sd_no_edges_in_active(self, grid):
+        """S/D 列 M0 在有源区无任何 M0-M0 边（通道区 y=6..10 可参与横向连线）"""
         for x in SD_COLS:
-            for y in range(1, 17):
+            for y in list(PMOS_ACTIVE_ROWS) + list(NMOS_ACTIVE_ROWS):
                 node = ("M0", x, y)
                 for nb in grid.get_neighbors(node):
                     assert nb[0] != "M0", \
-                        f"S/D M0({x},{y}) 不应有 M0-M0 边，发现邻居 {nb}"
+                        f"S/D M0({x},{y}) 在有源区不应有 M0-M0 边，发现邻居 {nb}"
 
     def test_m0_no_power_rail_rows(self, grid):
         """M0 在 y=0 和 y=17 无节点"""
@@ -404,22 +420,38 @@ class TestAND2GridStructure:
                 assert grid.graph.has_edge(("M0", x, y), ("M0", x, y + 1)), \
                     f"Gate x={x}: M0 y={y}↔{y+1} 竖向边缺失"
 
-    def test_m0_gate_no_horizontal_edges(self, grid):
-        """Gate 列 M0 无横向边（不同列 gate 不直接相连）"""
-        for x1 in GATE_COLS:
-            for x2 in GATE_COLS:
-                if x1 >= x2:
-                    continue
-                for y in range(1, 17):
-                    assert not grid.graph.has_edge(("M0", x1, y), ("M0", x2, y)), \
-                        f"Gate M0 横向边 x={x1}↔{x2} y={y} 不应存在"
+    def test_m0_horizontal_channel_rules(self, grid):
+        """通道区（y=6..10）所有相邻列 x↔x+1 均有 M0 横向单位边（含 Dummy x=5）；有源区无横向边"""
+        # 通道区：全部相邻对均有边，代价 = M0_H_UNIT_COST
+        for y in GATE_VIA_ROWS:
+            for x in range(COLS - 1):
+                e = grid.graph.get_edge_data(("M0", x, y), ("M0", x + 1, y))
+                assert e is not None, f"M0 x={x}↔{x+1} y={y} 通道横向边缺失"
+                assert abs(e.get("cost", -1) - M0_H_UNIT_COST) < 1e-9, \
+                    f"M0 x={x}↔{x+1} y={y} 代价应为 {M0_H_UNIT_COST}"
+        # 有源区：所有相邻列无横向边
+        for y in list(PMOS_ACTIVE_ROWS) + list(NMOS_ACTIVE_ROWS):
+            for x in range(COLS - 1):
+                assert not grid.graph.has_edge(("M0", x, y), ("M0", x + 1, y)), \
+                    f"M0 x={x}↔{x+1} y={y} 不应在有源区有横向边"
 
-    def test_m0_dummy_col_no_edges(self, grid):
-        """Dummy 列 (x=5) M0 无任何边（gate=None → 无布线）"""
+    def test_m0_dummy_col_no_vertical_or_via(self, grid):
+        """Dummy 列 (x=5) M0 无竖向边、无 via；通道区横向边允许"""
         for y in range(1, 17):
-            node = ("M0", DUMMY_GATE_COL, y)
-            assert len(list(grid.get_neighbors(node))) == 0, \
-                f"Dummy M0({DUMMY_GATE_COL},{y}) 不应有任何邻居"
+            # 无竖向边（上下方向）
+            if y < 16:
+                assert not grid.graph.has_edge(("M0", DUMMY_GATE_COL, y),
+                                               ("M0", DUMMY_GATE_COL, y + 1)), \
+                    f"Dummy M0({DUMMY_GATE_COL},{y}↔{y+1}) 不应有竖向边"
+            # 无 M0↔M1 via
+            assert not grid.graph.has_edge(("M0", DUMMY_GATE_COL, y),
+                                           ("M1", DUMMY_GATE_COL, y)), \
+                f"Dummy M0({DUMMY_GATE_COL},{y}) 不应有 M0↔M1 via"
+            # 通道区（y=6..10）：横向邻居应为同层 M0（合法）；有源区：无任何邻居
+            if y not in GATE_VIA_ROWS:
+                for nb in grid.get_neighbors(("M0", DUMMY_GATE_COL, y)):
+                    assert False, \
+                        f"Dummy M0({DUMMY_GATE_COL},{y}) 在有源区不应有任何邻居，发现 {nb}"
 
     def test_via_m0m1_gate_channel_only(self, grid):
         """Gate 列 M0↔M1 via 仅在 y=6..10（GATE_VIA_ROWS）"""
@@ -888,3 +920,363 @@ class TestAND2Engine:
                 f"[Engine] {net_name} M1 覆盖不足: x={j}, i={i}, "
                 f"需要 {min_n}, 实际 {actual}"
             )
+
+
+# ======================================================================
+# Class 6: PathConstraint 单元与集成测试
+# ======================================================================
+
+class TestPathConstraint:
+    """PathConstraint 边级约束的单元测试和集成验证"""
+
+    def _small_grid(self) -> GridGraph:
+        """
+        小型双路径测试网格:
+          直接路径 (cost=2): (M1,0,0) → (M1,1,0) → (M1,2,0)
+          绕行路径 (cost=4): (M1,0,0) → (M1,0,1) → (M1,1,1) → (M1,2,1) → (M1,2,0)
+        """
+        g = GridGraph()
+        for x in range(3):
+            g.add_node(("M1", x, 0))
+            g.add_node(("M1", x, 1))
+        g.add_edge(("M1", 0, 0), ("M1", 1, 0), cost=1.0)
+        g.add_edge(("M1", 1, 0), ("M1", 2, 0), cost=1.0)
+        g.add_edge(("M1", 0, 0), ("M1", 0, 1), cost=1.0)
+        g.add_edge(("M1", 0, 1), ("M1", 1, 1), cost=1.0)
+        g.add_edge(("M1", 1, 1), ("M1", 2, 1), cost=1.0)
+        g.add_edge(("M1", 2, 1), ("M1", 2, 0), cost=1.0)
+        return g
+
+    def _make_router(self, grid, pc):
+        from maze_router.maze_router_algo import MazeRouter
+        cm = ConstraintManager([pc])
+        cost_mgr = CostManager(grid=grid, costs=[CornerCost(l_costs={}, t_costs={})])
+        return MazeRouter(grid, cm, cost_mgr)
+
+    # ── is_edge_available 单元测试 ───────────────────────────────────────
+
+    def test_forbid_is_edge_available_basic(self):
+        """is_edge_available: 禁止边返回 False，非禁止边/其他线网返回 True"""
+        a, b, c = ("M1", 0, 0), ("M1", 1, 0), ("M1", 2, 0)
+        pc = PathConstraint(must_forbid_edges={"net_a": [(a, b)]})
+
+        assert not pc.is_edge_available(a, b, "net_a"), "禁止边应返回 False"
+        assert not pc.is_edge_available(b, a, "net_a"), "无向边反向也应返回 False"
+        assert pc.is_edge_available(a, c, "net_a"),     "非禁止边应返回 True"
+        assert pc.is_edge_available(a, b, "net_b"),     "不同线网不受约束"
+
+    # ── required_terminals 单元测试 ─────────────────────────────────────
+
+    def test_keep_required_terminals_endpoints_injected(self):
+        """required_terminals 返回 must-keep 边的两个端点"""
+        a, b = ("M1", 0, 0), ("M1", 1, 0)
+        g = self._small_grid()
+        pc = PathConstraint(must_keep_edges={"net_a": [(a, b)]})
+
+        terms = pc.required_terminals("net_a", g)
+        assert a in terms and b in terms
+        assert len(terms) == 2
+
+    def test_keep_required_terminals_dedup(self):
+        """两条 must-keep 边共享端点时，required_terminals 不重复注入"""
+        a, b, c = ("M1", 0, 0), ("M1", 1, 0), ("M1", 2, 0)
+        g = self._small_grid()
+        pc = PathConstraint(must_keep_edges={"net_a": [(a, b), (b, c)]})
+
+        terms = pc.required_terminals("net_a", g)
+        assert terms.count(b) == 1, "共享端点不应重复"
+        assert len(terms) == 3
+
+    # ── must_forbid_edges 路由集成测试 ──────────────────────────────────
+
+    def test_forbid_direct_path_uses_detour(self):
+        """禁止直接路径上的两条边后，路由应绕行成功且不经过禁止边"""
+        g = self._small_grid()
+        pc = PathConstraint(must_forbid_edges={
+            "net_t": [
+                (("M1", 0, 0), ("M1", 1, 0)),
+                (("M1", 1, 0), ("M1", 2, 0)),
+            ]
+        })
+        router = self._make_router(g, pc)
+        result = router.route(
+            sources={("M1", 0, 0)},
+            targets={("M1", 2, 0)},
+            net_name="net_t",
+        )
+        assert result.success, "绕行路径应可达"
+
+        edge_keys = {frozenset({a, b}) for a, b in result.edges}
+        assert frozenset({("M1", 0, 0), ("M1", 1, 0)}) not in edge_keys
+        assert frozenset({("M1", 1, 0), ("M1", 2, 0)}) not in edge_keys
+
+    def test_forbid_all_paths_returns_failure(self):
+        """禁止所有离开起点的边后路由应失败"""
+        g = self._small_grid()
+        pc = PathConstraint(must_forbid_edges={
+            "net_t": [
+                (("M1", 0, 0), ("M1", 1, 0)),
+                (("M1", 0, 0), ("M1", 0, 1)),
+            ]
+        })
+        router = self._make_router(g, pc)
+        result = router.route(
+            sources={("M1", 0, 0)},
+            targets={("M1", 2, 0)},
+            net_name="net_t",
+        )
+        assert not result.success, "所有路径被禁止时应返回失败"
+
+    # ── post_process_result 单元测试 ─────────────────────────────────────
+
+    def test_keep_post_process_pass(self):
+        """routed_edges 包含 must-keep 边时，校验通过"""
+        from maze_router.data.net import RoutingResult
+        a, b = ("M1", 0, 0), ("M1", 1, 0)
+        g = self._small_grid()
+        pc = PathConstraint(must_keep_edges={"net_a": [(a, b)]})
+
+        result = RoutingResult(net=Net("net_a", [a, b]))
+        result.success = True
+        result.routed_nodes = {a, b}
+        result.routed_edges = [(a, b)]
+
+        pc.post_process_result("net_a", result, g)
+        assert result.success
+
+    def test_keep_post_process_hard_fail(self):
+        """routed_edges 缺少 must-keep 边时（hard=True），标记布线失败"""
+        from maze_router.data.net import RoutingResult
+        a, b, c = ("M1", 0, 0), ("M1", 1, 0), ("M1", 2, 0)
+        g = self._small_grid()
+        pc = PathConstraint(must_keep_edges={"net_a": [(a, b)]}, hard=True)
+
+        result = RoutingResult(net=Net("net_a", [a, c]))
+        result.success = True
+        result.routed_nodes = {a, c}
+        result.routed_edges = [(a, c)]   # a-b 边缺失
+
+        pc.post_process_result("net_a", result, g)
+        assert not result.success
+
+    # ── Engine 端到端测试 ─────────────────────────────────────────────────
+
+    def test_engine_must_forbid_edges_redirects(self):
+        """MazeRouterEngine must_forbid_edges 端到端：禁止直接边后路由绕行"""
+        g = self._small_grid()
+        nets = [Net("net_t", [("M1", 0, 0), ("M1", 2, 0)])]
+        engine = MazeRouterEngine(
+            grid=g,
+            nets=nets,
+            space_constr={"M1": 0},
+            must_forbid_edges={
+                "net_t": [
+                    (("M1", 0, 0), ("M1", 1, 0)),
+                    (("M1", 1, 0), ("M1", 2, 0)),
+                ]
+            },
+        )
+        solution = engine.run()
+        result = solution.results["net_t"]
+        assert result.success, "禁止直接路径后，绕行路径应布通"
+
+        edge_keys = {frozenset({a, b}) for a, b in result.routed_edges}
+        assert frozenset({("M1", 0, 0), ("M1", 1, 0)}) not in edge_keys
+        assert frozenset({("M1", 1, 0), ("M1", 2, 0)}) not in edge_keys
+
+    def test_routing_must_keep_edge_in_routed_edges(self):
+        """must_keep_edges 指定边必须出现在 routed_edges 中（路由过程强制走边）"""
+        g = self._small_grid()
+        # 强制走绕行路径上的边 (M1,0,0)-(M1,0,1)
+        keep_edge = (("M1", 0, 0), ("M1", 0, 1))
+        nets = [Net("net_t", [("M1", 0, 0), ("M1", 2, 0)])]
+        engine = MazeRouterEngine(
+            grid=g,
+            nets=nets,
+            space_constr={"M1": 0},
+            must_keep_edges={"net_t": [keep_edge]},
+        )
+        solution = engine.run()
+        result = solution.results["net_t"]
+        assert result.success, "must_keep_edge 不应导致布线失败"
+
+        edge_keys = {frozenset({a, b}) for a, b in result.routed_edges}
+        assert frozenset(set(keep_edge)) in edge_keys, \
+            f"must_keep_edge {keep_edge} 应出现在 routed_edges 中"
+
+    def test_routing_must_keep_edge_nonexistent_fails(self):
+        """must_keep_edges 中不存在于网格的边应导致布线失败"""
+        g = self._small_grid()
+        # (M1,0,0)-(M1,2,0) 在 _small_grid 中没有直接边
+        bad_edge = (("M1", 0, 0), ("M1", 2, 0))
+        nets = [Net("net_t", [("M1", 0, 0), ("M1", 2, 0)])]
+        engine = MazeRouterEngine(
+            grid=g,
+            nets=nets,
+            space_constr={"M1": 0},
+            must_keep_edges={"net_t": [bad_edge]},
+        )
+        solution = engine.run()
+        assert not solution.results["net_t"].success, \
+            "must_keep_edge 指定网格中不存在的边时应失败"
+
+
+# ======================================================================
+# Class 7: PreRoute 机制集成测试
+# ======================================================================
+
+class TestPreRoute:
+    """
+    验证 RipupManager 的预布线（pre-route）机制：
+      1. pre_route 阶段正确标记 SpaceConstraint 和拥塞地图
+      2. 正常布线使用 pre-routed 节点作为出发点
+      3. 拆线时 pre-routed 节点受保护（不被移除）
+      4. 整网拆线后 pre-routed 节点重新标记，其他线网仍受阻
+    """
+
+    def _small_grid(self) -> GridGraph:
+        """双路径小网格（同 TestPathConstraint._small_grid）"""
+        g = GridGraph()
+        for x in range(3):
+            g.add_node(("M1", x, 0))
+            g.add_node(("M1", x, 1))
+        g.add_edge(("M1", 0, 0), ("M1", 1, 0), cost=1.0)
+        g.add_edge(("M1", 1, 0), ("M1", 2, 0), cost=1.0)
+        g.add_edge(("M1", 0, 0), ("M1", 0, 1), cost=1.0)
+        g.add_edge(("M1", 0, 1), ("M1", 1, 1), cost=1.0)
+        g.add_edge(("M1", 1, 1), ("M1", 2, 1), cost=1.0)
+        g.add_edge(("M1", 2, 1), ("M1", 2, 0), cost=1.0)
+        return g
+
+    def _make_ripup_mgr(self, grid, space=0, must_keep=None):
+        from maze_router.ripup_manager import RipupManager
+        constraints = [SpaceConstraint({"M1": space})]
+        if must_keep:
+            constraints.append(PathConstraint(must_keep_edges=must_keep))
+        cm = ConstraintManager(constraints)
+        cost_mgr = CostManager(
+            grid=grid,
+            costs=[CornerCost(l_costs={}, t_costs={})],
+        )
+        strategy = CongestionAwareRipupStrategy(
+            max_iterations=10, base_penalty=0.1, penalty_growth=0.3
+        )
+        return RipupManager(grid, cm, cost_mgr, strategy)
+
+    def test_pre_route_marks_space_constraint(self):
+        """pre_route 后，预布线节点在 SpaceConstraint 中被标记为已占用"""
+        from maze_router.ripup_manager import RipupManager
+        from maze_router.constraints.space_constraint import SpaceConstraint as SC
+
+        g = self._small_grid()
+        keep_edge = (("M1", 0, 0), ("M1", 0, 1))
+        net_t = Net("net_t", [("M1", 0, 0), ("M1", 2, 0)])
+
+        sc = SC({"M1": 0})
+        pc = PathConstraint(must_keep_edges={"net_t": [keep_edge]})
+        cm = ConstraintManager([sc, pc])
+        cost_mgr = CostManager(grid=g, costs=[CornerCost(l_costs={}, t_costs={})])
+        strategy = CongestionAwareRipupStrategy(max_iterations=5)
+        mgr = RipupManager(g, cm, cost_mgr, strategy)
+
+        # pre_route 在 run() 内部触发，直接调用 _build_pre_routes 验证
+        pre_routes = mgr._build_pre_routes([net_t])
+
+        assert "net_t" in pre_routes, "有 must_keep_edges 的线网应有 pre_route 结果"
+        pr = pre_routes["net_t"]
+        assert ("M1", 0, 0) in pr.routed_nodes
+        assert ("M1", 0, 1) in pr.routed_nodes
+        assert pr.success
+
+        # SpaceConstraint 中已标记
+        assert not cm.is_available(("M1", 0, 0), "other_net"), \
+            "预布线节点对其他线网不可用（space=0 时应阻断）"
+
+    def test_pre_route_updates_congestion(self):
+        """pre_route 后，预布线节点在拥塞地图中有初始拥塞"""
+        from maze_router.ripup_manager import RipupManager
+        from maze_router.constraints.space_constraint import SpaceConstraint as SC
+
+        g = self._small_grid()
+        keep_edge = (("M1", 0, 0), ("M1", 0, 1))
+        net_t = Net("net_t", [("M1", 0, 0), ("M1", 2, 0)])
+
+        sc = SC({"M1": 0})
+        pc = PathConstraint(must_keep_edges={"net_t": [keep_edge]})
+        cm = ConstraintManager([sc, pc])
+        cost_mgr = CostManager(grid=g, costs=[CornerCost(l_costs={}, t_costs={})])
+        strategy = CongestionAwareRipupStrategy(max_iterations=5)
+        mgr = RipupManager(g, cm, cost_mgr, strategy)
+
+        mgr._build_pre_routes([net_t])
+
+        cong = cost_mgr.get_congestion_map()
+        assert ("M1", 0, 0) in cong, "预布线节点应在拥塞地图中"
+        assert cong[("M1", 0, 0)] > 0.0, "预布线节点应有正拥塞值"
+        assert ("M1", 0, 1) in cong
+        assert cong[("M1", 0, 1)] > 0.0
+
+    def test_pre_route_nodes_survive_ripup(self):
+        """整网拆线后预布线节点仍在 SpaceConstraint 中标记，其他线网被阻断"""
+        from maze_router.ripup_manager import RipupManager
+        from maze_router.constraints.space_constraint import SpaceConstraint as SC
+
+        g = self._small_grid()
+        keep_edge = (("M1", 0, 0), ("M1", 0, 1))
+        net_t = Net("net_t", [("M1", 0, 0), ("M1", 2, 0)])
+
+        sc = SC({"M1": 0})
+        pc = PathConstraint(must_keep_edges={"net_t": [keep_edge]})
+        cm = ConstraintManager([sc, pc])
+        cost_mgr = CostManager(grid=g, costs=[CornerCost(l_costs={}, t_costs={})])
+        strategy = CongestionAwareRipupStrategy(max_iterations=5)
+        mgr = RipupManager(g, cm, cost_mgr, strategy)
+
+        # 初始化并手动触发 pre_route
+        pre_routes = mgr._build_pre_routes([net_t])
+
+        # 模拟完整路由后再拆线
+        from maze_router.data.net import RoutingResult
+        full_result = RoutingResult(net=net_t)
+        full_result.success = True
+        full_result.routed_nodes = {
+            ("M1", 0, 0), ("M1", 1, 0), ("M1", 2, 0),
+            ("M1", 0, 1),
+        }
+
+        from maze_router.data.net import RoutingSolution
+        sol = RoutingSolution()
+        sol.add_result(full_result)
+        cm.mark_route("net_t", full_result.routed_nodes)
+
+        # 执行整网拆线（含预布线保护）
+        mgr._do_ripup("net_t", sol, pre_routes)
+
+        # 预布线节点仍然标记
+        assert not cm.is_available(("M1", 0, 0), "other_net"), \
+            "拆线后预布线节点仍应阻断其他线网"
+        assert not cm.is_available(("M1", 0, 1), "other_net"), \
+            "拆线后预布线节点仍应阻断其他线网"
+
+        # 非预布线节点已解锁
+        assert cm.is_available(("M1", 1, 0), "other_net"), \
+            "拆线后非预布线节点应可用"
+
+    def test_engine_pre_route_end_to_end(self):
+        """Engine 端到端：must_keep_edge 通过 pre_route 固定，最终出现在路由结果"""
+        g = self._small_grid()
+        keep_edge = (("M1", 0, 0), ("M1", 0, 1))
+        nets = [Net("net_t", [("M1", 0, 0), ("M1", 2, 0)])]
+        engine = MazeRouterEngine(
+            grid=g,
+            nets=nets,
+            space_constr={"M1": 0},
+            must_keep_edges={"net_t": [keep_edge]},
+        )
+        solution = engine.run()
+        result = solution.results["net_t"]
+        assert result.success
+
+        edge_keys = {frozenset({a, b}) for a, b in result.routed_edges}
+        assert frozenset(set(keep_edge)) in edge_keys, \
+            "must_keep_edge 应出现在最终路由结果中"

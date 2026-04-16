@@ -9,6 +9,7 @@ import os
 
 from maze_router import MazeRouterEngine
 from tests.conftest import make_oai33_testcase, make_stdcell_testcase
+from tests.test_mux2_x1_ml import *
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,80 +17,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-def run_oai33():
-    """OAI33 演示。"""
-    logger.info("=== OAI33 标准单元布线演示 ===")
-    grid, nets, _, _ = make_oai33_testcase(space=1, corner_l_cost=3.0)
-
+def run_mux2():
+    """Engine 端到端：MUX2 全 10 线网，space=0，至少 10/10 布通"""
+    grid = build_mux2_grid()
+    nets, active_rules = build_and2_nets(grid)
     engine = MazeRouterEngine(
         grid=grid,
         nets=nets,
-        space_constr={"M0": 1, "M1": 1, "M2": 1},
-        corner_l_costs={"M0": 3.0, "M1": 3.0, "M2": 0.0},
-        corner_t_costs={"M0": 1.0, "M1": 1.0},
+        space_constr={"M0": 0, "M1": 0, "M2": 0},
+        corner_l_costs={"M0": 1.0, "M1": 5.0, "M2": 0.0},
+        corner_t_costs={"M0": 2.0, "M1": 10.0, "M2": 0.0},
         strategy="congestion_aware",
-        max_iterations=12,
+        max_iterations=80,
+        net_active_must_occupy_num=active_rules,
+        row_type_y_ranges=ROW_TYPE_Y_RANGES,
     )
-
     solution = engine.run()
-
-    save_dir = os.path.join("results", "stdcell_oai33")
-    engine.visualize(save_dir=save_dir)
-
-    logger.info(f"布线结果: {solution}")
-    logger.info(f"SVG 保存到: {save_dir}/")
-
-    failed = solution.failed_nets
-    if failed:
-        logger.warning(f"未布通线网: {failed}")
-    else:
-        logger.info("所有线网布通！")
-
-    return solution
-
-
-def run_larger():
-    """更大规模的标准单元演示（6 晶体管/排）。"""
-    logger.info("=== 6T 标准单元布线演示 ===")
-    grid, nets, _, _ = make_stdcell_testcase(
-        n_transistors=6,
-        n_rows=9,
-        space=1,
-        corner_l_cost=5.0,
-        corner_t_cost=1.0,
-        soft_space_penalty=0.5,
+    save_dir = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)),
+        "results", "stdcell_mux2",
     )
+    from maze_router.visualizer import Visualizer
+    viz = Visualizer(grid, solution)
+    viz.save_svgs(save_dir=save_dir)
 
-    engine = MazeRouterEngine(
-        grid=grid,
-        nets=nets,
-        space_constr={"M0": 1, "M1": 1, "M2": 1},
-        corner_l_costs={"M0": 5.0, "M1": 5.0, "M2": 0.0},
-        corner_t_costs={"M0": 1.0},
-        space_cost_rules=[
-            ("M0", "S2S", 2, 0.5),
-            ("M1", "T2S", 2, 0.3),
-        ],
-        strategy="congestion_aware",
-        max_iterations=15,
-    )
+    for name in [net.name for net in nets]:
+        assert solution.results[name].success, f"共栅 {name} 必须布通"
 
-    solution = engine.run()
-
-    save_dir = os.path.join("results", "stdcell_6t")
-    engine.visualize(save_dir=save_dir)
-
-    logger.info(f"布线结果: {solution}")
-    logger.info(f"SVG 保存到: {save_dir}/")
-    return solution
-
+    assert solution.routed_count == 10, \
+        f"AND2 布通实际 {solution.routed_count}/10"
+    assert solution.routed_count >= 4, \
+        f"Engine space=1 应至少 10/10 布通，实际 {solution.routed_count}/10"
 
 if __name__ == "__main__":
-    sol1 = run_oai33()
-    sol2 = run_larger()
-
-    print("\n" + "=" * 60)
-    print("OAI33 结果:", sol1)
-    print("6T 结果:  ", sol2)
-    print("=" * 60)
+    sol = run_mux2()

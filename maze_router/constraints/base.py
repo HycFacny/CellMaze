@@ -3,7 +3,7 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Set
+from typing import List, Set, Tuple
 from maze_router.data.net import Node
 
 
@@ -58,6 +58,34 @@ class BaseConstraint(ABC):
             grid:     GridGraph（只读，用于查找邻居节点）
         """
         pass
+
+    def is_edge_available(self, node_a: Node, node_b: Node, net_name: str) -> bool:
+        """
+        判断边 (node_a, node_b) 对给定线网是否可用。
+
+        默认允许所有边，子类可覆盖以实现边级禁止约束（must_forbid_edges）。
+
+        参数:
+            node_a, node_b: 边的两个端点
+            net_name:       当前线网名称
+        返回:
+            True = 边可用；False = 边被禁止
+        """
+        return True
+
+    def get_must_keep_edges(self, net_name: str) -> List[Tuple[Node, Node]]:
+        """
+        返回该线网必须走的边列表（must_keep_edges 约束）。
+
+        路由算法在构建 Steiner 树时会主动经过这些边。
+        默认返回空列表，PathConstraint 覆盖此方法。
+
+        参数:
+            net_name: 线网名称
+        返回:
+            必须走的边列表 [(node_a, node_b), ...]
+        """
+        return []
 
     def required_terminals(self, net_name: str, grid) -> List[Node]:
         """

@@ -179,6 +179,10 @@ class MazeRouter:
                     if not self.constraint_mgr.is_available(neighbor, net_name):
                         continue
 
+                # 边级约束检查（must_forbid_edges）
+                if not self.constraint_mgr.is_edge_available(current, neighbor, net_name):
+                    continue
+
                 # M0 cable_locs 约束
                 if cable_locs is not None and neighbor[0] == "M0":
                     if neighbor not in cable_locs and neighbor not in targets:
@@ -347,7 +351,63 @@ def build_steiner_greedy(
     tree_node_dirs: Dict[Node, Set[int]] = {}
     total_cost = 0.0
 
+    # ── Phase 1: 强制经过 must-keep 边 ────────────────────────────────
+    # 策略：对每条 must-keep 边 (a, b)：
+    #   1. 如果 a 不在树中，先将 a 路由进树
+    #   2. 然后强制走边 (a→b)，将 b 加入树
+    #   这样 (a, b) 一定出现在 result.routed_edges 中。
+    must_keep = constraint_mgr.get_must_keep_edges(net.name)
+    _kept_keys: set = set()   # frozenset 已注入的 must-keep 边
+
+    for a, b in must_keep:
+        # 验证：两个端点必须在网格中，且边必须存在
+        if not grid.is_valid_node(a) or not grid.is_valid_node(b):
+            result.success = False
+            return result
+        edge_cost_ab = grid.get_edge_cost(a, b)
+        if edge_cost_ab >= float('inf'):
+            result.success = False
+            return result
+
+        # Step 1: 将 a 连入当前树
+        if a not in tree_nodes:
+            path = router.route(
+                sources=tree_nodes,
+                targets={a},
+                net_name=net.name,
+                cable_locs=net.cable_locs,
+                iteration=iteration,
+                tree_node_dirs=tree_node_dirs,
+            )
+            if not path.success:
+                result.success = False
+                return result
+            tree_nodes.update(path.nodes)
+            result.routed_edges.extend(path.edges)
+            _update_tree_node_dirs(tree_node_dirs, path.edges)
+            total_cost += path.cost
+
+        # Step 2: 强制走边 (a, b)
+        ab_key = frozenset({a, b})
+        if b not in tree_nodes:
+            # b 尚未在树中：通过 must-keep 边将 b 接入树
+            tree_nodes.add(b)
+            result.routed_edges.append((a, b))
+            _update_tree_node_dirs(tree_node_dirs, [(a, b)])
+            total_cost += edge_cost_ab
+            _kept_keys.add(ab_key)
+        elif ab_key not in _kept_keys:
+            # b 已在树中（通过其他路径），仍追加此边（允许冗余连接）
+            result.routed_edges.append((a, b))
+            _update_tree_node_dirs(tree_node_dirs, [(a, b)])
+            total_cost += edge_cost_ab
+            _kept_keys.add(ab_key)
+
+    # ── Phase 2: 贪心连接剩余 terminals ──────────────────────────────
     for target in terminals[1:]:
+        if target in tree_nodes:
+            continue   # 已被 must-keep 预连或首个 terminal 覆盖
+
         path = router.route(
             sources=tree_nodes,
             targets={target},

@@ -14,9 +14,8 @@
 
 
 YMTC工艺特定：
-
 1. 读取techs/ymtc_cj3/grid_place中的 [
-    AND2_X1_ML.xlsx,
+    MUX2_X1_ML.xlsx
 ]
 这个（些）文件描述了YMTC的CJ3工艺的标准单元在M0层的网格布局情况（S/D Active）。在 source、drain 列中，有标注线网的网格是该线网的有源区占用；在gate列中，则是标注了gate在当前列的连接情况
 
@@ -30,15 +29,9 @@ YMTC工艺特定：
 
 5. S/D在M0层没有任何横纵连线，只有GATE有
 
+6. 在中间的非active区域都是能连的，dummy列的中间部分是可以左右连的
 
-
-任务需求：根据这个xlsx文件生成一个testcase，并测试项目。
-
-
-
-
-
-看了一下test_and2.py，其中有一些理解的错误：
+补充理解：
 1. 没有填S/D/G的位置则是None，表示的是当前的晶体管可能是dummy或者break，这里给出dummy、break的判断标准：
    1. 若gate == None，则是dummy或者break
    2. 在1.的情况下，若该晶体管的S==D（或者S和D一个是None一个不是），则是dummy，否则是break
@@ -46,14 +39,19 @@ YMTC工艺特定：
    
 2. 晶体管的排列是：前一个晶体管的D和后一个晶体管的S是相同且重叠的，比如：0号晶体管的D是第2列，1号晶体管的S也是第二列，因此没有什么L_active, R_active的概念
 
-3. 表格的下方是NMOS，上方是PMOS，即：NMOS区域是13-17行，PMOS是0-5行，其中M0的0行和17行不是active区域，因此也不可布线；M1的0行和17行则分别是VDD、VSS的power rail，VDD、VSS的net分别都要练到这两个rail上，且这两个rail是全连接的
+3. 表格的下方是NMOS，上方是PMOS，即：NMOS区域是12-18行，PMOS是0-6行，其中M0的0行和18行不是active区域，因此也不可布线；M1的0行和18行则分别是VDD、VSS的power rail，VDD、VSS的net分别都要练到这两个rail上，且这两个rail是全连接的
    
-3. M2只有第7行和第9行能够布线，并且只能横向布线
+4. M2只有第8行和第10行能够布线，并且只能横向布线
    
-4. 新增：M0的Gate连线的通孔只能出现在非Active区域（即6～10行），并且Gate不能直接在M0连接S/D
+5. 新增：M0的Gate连线的通孔只能出现在非Active区域（即7～11行），并且Gate不能直接在M0连接S/D
 
-5. 新增：A、B、Y为需要出pin的线网，出pin在M1层
+6. 新增：Q、S、D0、D1为需要出pin的线网，出pin在M1层
    
-6. VSS和VDD在M1层上只能纵向连接到power-rail上，不能横向连接到其它的VSS、VDD，因此我们可以将VSS、VDD在M1的Active区域到边界的纵向边cost设置为0
-   
-根据上述的情况重新梳理test_and2.py，重写，并将你的理解形成一个understand.md存放在 techs/ymtc_cj3/ 里
+7. VSS和VDD在M1层上只能纵向连接到power-rail上，不能横向连接到其它的VSS、VDD，因此我们可以将VSS、VDD在M1的Active区域到边界的纵向边cost设置为0
+
+8. 在中间的非active区域都是能连的，dummy列的中间部分是可以左右连的
+
+
+
+
+任务需求：根据这个xlsx文件生成一个testcase，并测试项目，同时将你的理解形成一个understand.md存放在 techs/ymtc_cj3/ 里

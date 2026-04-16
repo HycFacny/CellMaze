@@ -1,15 +1,3 @@
-"""
-SteinerRouter: Dreyfus-Wagner DP Steiner 树路由器
-
-基于精确 DP 算法（Dreyfus-Wagner）的多端口 Steiner 树求解器。
-适用于 terminal 数量 ≤ 10（默认 ≤ 8）的线网。
-
-折角代价集成方案：
-  1. 子集合并（split）：在节点 v 处合并两棵子树，施加 T 型折角代价。
-  2. Dijkstra 松弛：沿边扩展，方向改变时叠加 L 型折角代价。
-  最终 dp[mask][v] 反映含折角代价的最优 Steiner 树代价。
-"""
-
 from __future__ import annotations
 import heapq
 import logging
@@ -25,12 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class SteinerRouter:
-    """
-    基于 Dreyfus-Wagner DP 的 Steiner 树路由器。
-
-    时间复杂度: O(3^k·N + 2^k·N·log N)，k = terminal 数量，N = 节点数。
-    """
-
+    """k = terminal 数量，N = 节点数。"""
     def __init__(
         self,
         grid: GridGraph,
@@ -115,6 +98,33 @@ class SteinerRouter:
         tree_edges: List[Edge] = []
         self._backtrace(full_mask, best_root, parent, valid_nodes, tree_nodes, tree_edges)
 
+        # 步骤5: 注入 must-keep 边（DP 可能已建立连通但未走该边）
+        # 两端点均通过 required_terminals 注入为 terminal，DP 保证它们在树中；
+        # 若 DP 绕行未用该边，此处直接追加（允许树有冗余连接）。
+        must_keep = self.constraint_mgr.get_must_keep_edges(net.name)
+        if must_keep:
+            existing_keys = {frozenset({a, b}) for a, b in tree_edges}
+            for a, b in must_keep:
+                key = frozenset({a, b})
+                if key in existing_keys:
+                    continue
+                if a not in tree_nodes or b not in tree_nodes:
+                    logger.warning(
+                        f"线网 {net.name}: must_keep_edge {(a, b)} 端点不在 Steiner 树中，"
+                        f"DP 求解失败"
+                    )
+                    result.success = False
+                    return result
+                # 验证边存在于网格
+                if self.grid.get_edge_cost(a, b) >= float('inf'):
+                    logger.warning(
+                        f"线网 {net.name}: must_keep_edge {(a, b)} 在网格中不存在"
+                    )
+                    result.success = False
+                    return result
+                tree_edges.append((a, b))
+                existing_keys.add(key)
+
         result.routed_nodes = tree_nodes
         result.routed_edges = tree_edges
         result.total_cost = best_cost
@@ -177,6 +187,8 @@ class SteinerRouter:
             for neighbor in self.grid.get_neighbors(node):
                 if neighbor not in valid_set:
                     continue
+                if not self.constraint_mgr.is_edge_available(node, neighbor, net.name):
+                    continue
                 j = node_to_idx[neighbor]
                 cost = self.cost_mgr.get_edge_cost(node, neighbor, ctx)
                 adj[i].append((j, cost))
@@ -214,8 +226,6 @@ class SteinerRouter:
         cost_mgr: CostManager,
     ) -> Tuple[List[List[float]], List[List[Optional[tuple]]]]:
         """
-        执行 Dreyfus-Wagner DP（含折角感知 Dijkstra 松弛和 T 型折角分支惩罚）。
-
         dp[S][v]: 以节点 v 为根、连接端口子集 S 的最小代价
         转移:
           1. 子集合并（T 型折角）: dp[S][v] = dp[S'][v] + dp[S\\S'][v] + t_corner(v)

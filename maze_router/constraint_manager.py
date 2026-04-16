@@ -37,6 +37,22 @@ class ConstraintManager:
         """所有约束都满足才返回 True。"""
         return all(c.is_available(node, net_name) for c in self._constraints)
 
+    def is_edge_available(self, node_a: Node, node_b: Node, net_name: str) -> bool:
+        """所有约束对边 (node_a, node_b) 都允许才返回 True。"""
+        return all(c.is_edge_available(node_a, node_b, net_name) for c in self._constraints)
+
+    def get_must_keep_edges(self, net_name: str) -> list:
+        """收集所有约束为线网声明的 must-keep 边（去重，保持首次顺序）。"""
+        seen: set = set()
+        result: list = []
+        for c in self._constraints:
+            for edge in c.get_must_keep_edges(net_name):
+                key = frozenset(edge)
+                if key not in seen:
+                    seen.add(key)
+                    result.append(edge)
+        return result
+
     def get_blocking_nets(self, node: Node, net_name: str) -> Set[str]:
         """合并所有约束返回的阻塞线网名称集合。"""
         result: Set[str] = set()
